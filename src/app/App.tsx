@@ -1,7 +1,7 @@
 import { ThemeProvider } from '@/app/components/theme-provider';
 import Titlebar from '@/app/components/titlebar';
 import { useRendererListener } from '@/app/hooks';
-import { LandingScreen } from '@/app/screens/landing';
+import { VMDashboard } from '@/app/screens/vm-dashboard';
 import { MenuChannels } from '@/channels/menuChannels';
 
 import { Route, HashRouter as Router, Routes } from 'react-router-dom';
@@ -20,7 +20,7 @@ export default function App () {
           <Titlebar />
           <main className='flex-1 overflow-auto'>
             <Routes>
-              <Route path='/' Component={LandingScreen} />
+              <Route path='/' Component={VMDashboard} />
             </Routes>
           </main>
         </div>

@@ -3,6 +3,7 @@ import installExtension, { REACT_DEVELOPER_TOOLS } from 'electron-devtools-insta
 import squirrelStartup from 'electron-squirrel-startup';
 
 import { createAppWindow } from './appWindow';
+import { setupLibvirtIPC } from './ipc/libvirtIPC';
 
 process.env.ELECTRON_DISABLE_SECURITY_WARNINGS = 'true';
 
@@ -22,7 +23,10 @@ app.whenReady().then(() => {
  * initialization and is ready to create browser windows.
  * Some APIs can only be used after this event occurs.
  */
-app.on('ready', createAppWindow);
+app.on('ready', () => {
+  setupLibvirtIPC();
+  createAppWindow();
+});
 
 /**
  * Emitted when the application is activated. Various actions can

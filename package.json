@@ -1,8 +1,8 @@
 {
-  "name": "reactronite",
-  "productName": "Reactronite",
-  "version": "2.3.1",
-  "description": "A modern, feature-rich Electron kit for building cross-platform desktop applications",
+  "name": "libvirt-ui",
+  "productName": "LibVirt UI",
+  "version": "1.0.0",
+  "description": "A modern UI for managing QEMU/KVM virtual machines with libvirt",
   "main": ".vite/build/main.js",
   "license": "MIT",
   "packageManager": "pnpm@10.11.0",
