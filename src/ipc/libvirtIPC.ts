@@ -1,146 +1,174 @@
-import { ipcMain, shell } from 'electron';
 import { exec, spawn } from 'child_process';
-import { promisify } from 'util';
 import * as fs from 'fs';
 import * as path from 'path';
+import { promisify } from 'util';
+
+import { app, ipcMain } from 'electron';
+import * as yaml from 'yaml';
 
 const execAsync = promisify(exec);
-const LIBVIRT_IMAGES_DIR = '/var/lib/libvirt/images';
+// In development, the config is relative to the project root
+// In production, it would be in the app resources
+const CONFIG_PATH = app.isPackaged
+  ? path.join(process.resourcesPath, 'config/vms.yaml')
+  : path.join(app.getAppPath(), 'config/vms.yaml');
+
+interface VMConfig {
+  name: string;
+  displayName: string;
+  description: string;
+  category: string;
+  imagePath: string;
+  specs: {
+    memory: number; // MB
+    cpus: number;
+    diskSize: number; // GB
+  };
+  features: string[];
+  os: {
+    type: string;
+    distribution: string;
+    version: string;
+  };
+  network: {
+    type: string;
+    interface: string;
+  };
+  graphics: {
+    type: string;
+    port: number;
+  };
+  tags: string[];
+  autoStart: boolean;
+}
+
+interface VMsConfig {
+  vms: VMConfig[];
+  settings: {
+    defaultMemory: number;
+    defaultCPUs: number;
+    defaultNetwork: string;
+    imagesDirectory: string;
+    autoRefresh: boolean;
+    refreshInterval: number;
+  };
+}
 
 interface VM {
   name: string;
+  displayName?: string;
+  description?: string;
   state: 'running' | 'stopped' | 'paused';
   memory: string;
   cpus: number;
   diskSize: string;
   imagePath: string;
+  category?: string;
+  tags?: string[];
 }
 
-async function executeVirshCommand(command: string): Promise<string> {
+async function loadVMConfig (): Promise<VMsConfig> {
   try {
-    const { stdout } = await execAsync(`virsh ${command}`);
-    return stdout.trim();
-  } catch (error: any) {
-    console.error(`Virsh command failed: ${command}`, error);
-    throw new Error(`Failed to execute virsh command: ${error.message}`);
+    const fileContents = await fs.promises.readFile(CONFIG_PATH, 'utf8');
+    return yaml.parse(fileContents) as VMsConfig;
+  } catch (error) {
+    console.error('Failed to load VM configuration:', error);
+    // Return empty config if file doesn't exist or can't be parsed
+    return {
+      vms: [],
+      settings: {
+        defaultMemory: 2048,
+        defaultCPUs: 2,
+        defaultNetwork: 'nat',
+        imagesDirectory: '/var/lib/libvirt/images',
+        autoRefresh: true,
+        refreshInterval: 5000
+      }
+    };
   }
 }
 
-async function getVMInfo(domain: string): Promise<Partial<VM>> {
+async function executeVirshCommand (command: string): Promise<string> {
+  try {
+    const { stdout } = await execAsync(`virsh ${command}`);
+    return stdout.trim();
+  } catch (error) {
+    console.error(`Virsh command failed: ${command}`, error);
+    const errorMessage = error instanceof Error ? error.message : String(error);
+    throw new Error(`Failed to execute virsh command: ${errorMessage}`);
+  }
+}
+
+async function getVMState (domain: string): Promise<'running' | 'stopped' | 'paused'> {
   try {
     const dominfo = await executeVirshCommand(`dominfo ${domain}`);
     const lines = dominfo.split('\n');
 
-    let state: 'running' | 'stopped' | 'paused' = 'stopped';
-    let memory = '0 MB';
-    let cpus = 0;
-
     for (const line of lines) {
       if (line.includes('State:')) {
         const stateStr = line.split(':')[1].trim().toLowerCase();
-        if (stateStr.includes('running')) state = 'running';
-        else if (stateStr.includes('paused')) state = 'paused';
-        else state = 'stopped';
-      } else if (line.includes('Max memory:')) {
-        const memKB = parseInt(line.match(/\d+/)?.[0] || '0');
-        memory = `${Math.round(memKB / 1024)} MB`;
-      } else if (line.includes('CPU(s):')) {
-        cpus = parseInt(line.match(/\d+/)?.[0] || '0');
+        if (stateStr.includes('running')) return 'running';
+        if (stateStr.includes('paused')) return 'paused';
+        return 'stopped';
       }
     }
-
-    return { state, memory, cpus };
-  } catch (error) {
-    console.error(`Failed to get VM info for ${domain}:`, error);
-    return { state: 'stopped', memory: '0 MB', cpus: 0 };
+    return 'stopped';
+  } catch (_error) {
+    // If virsh fails, assume VM is stopped
+    return 'stopped';
   }
 }
 
-async function getDiskSize(imagePath: string): Promise<string> {
+async function checkImageExists (imagePath: string): Promise<boolean> {
+  try {
+    await fs.promises.access(imagePath, fs.constants.F_OK);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+async function getDiskSize (imagePath: string): Promise<string> {
   try {
     const stats = await fs.promises.stat(imagePath);
     const sizeInGB = (stats.size / (1024 * 1024 * 1024)).toFixed(1);
     return `${sizeInGB} GB`;
-  } catch (error) {
+  } catch (_error) {
     return '0 GB';
   }
 }
 
-async function scanForQcow2Images(): Promise<string[]> {
-  try {
-    const files = await fs.promises.readdir(LIBVIRT_IMAGES_DIR);
-    return files.filter(file => file.endsWith('.qcow2'));
-  } catch (error) {
-    console.error('Failed to scan for qcow2 images:', error);
-    return [];
-  }
-}
-
-async function getVMFromImage(imagePath: string): Promise<VM | null> {
-  const imageName = path.basename(imagePath, '.qcow2');
-
-  try {
-    const vmInfo = await getVMInfo(imageName);
-    const diskSize = await getDiskSize(path.join(LIBVIRT_IMAGES_DIR, imagePath));
-
-    return {
-      name: imageName,
-      state: vmInfo.state || 'stopped',
-      memory: vmInfo.memory || '2048 MB',
-      cpus: vmInfo.cpus || 2,
-      diskSize,
-      imagePath: imagePath
-    };
-  } catch (error) {
-    return {
-      name: imageName,
-      state: 'stopped',
-      memory: '2048 MB',
-      cpus: 2,
-      diskSize: await getDiskSize(path.join(LIBVIRT_IMAGES_DIR, imagePath)),
-      imagePath: imagePath
-    };
-  }
-}
-
-export function setupLibvirtIPC(): void {
+export function setupLibvirtIPC (): void {
   ipcMain.handle('libvirt:list-vms', async () => {
     try {
-      const qcow2Images = await scanForQcow2Images();
+      const config = await loadVMConfig();
       const vms: VM[] = [];
 
-      for (const image of qcow2Images) {
-        const vm = await getVMFromImage(image);
-        if (vm) vms.push(vm);
-      }
+      // Process each VM from the config
+      for (const vmConfig of config.vms) {
+        // Check the actual state using virsh
+        const state = await getVMState(vmConfig.name);
 
-      try {
-        const listOutput = await executeVirshCommand('list --all --name');
-        const domains = listOutput.split('\n').filter(d => d.trim());
+        // Check if image exists and get actual size if it does
+        const imageExists = await checkImageExists(vmConfig.imagePath);
+        const actualDiskSize = imageExists
+          ? await getDiskSize(vmConfig.imagePath)
+          : `${vmConfig.specs.diskSize} GB (configured)`;
 
-        for (const domain of domains) {
-          if (!domain) continue;
+        const vm: VM = {
+          name: vmConfig.name,
+          displayName: vmConfig.displayName,
+          description: vmConfig.description,
+          state,
+          memory: `${vmConfig.specs.memory} MB`,
+          cpus: vmConfig.specs.cpus,
+          diskSize: actualDiskSize,
+          imagePath: vmConfig.imagePath,
+          category: vmConfig.category,
+          tags: vmConfig.tags
+        };
 
-          const existingVM = vms.find(vm => vm.name === domain);
-          if (existingVM) {
-            const vmInfo = await getVMInfo(domain);
-            existingVM.state = vmInfo.state || existingVM.state;
-            existingVM.memory = vmInfo.memory || existingVM.memory;
-            existingVM.cpus = vmInfo.cpus || existingVM.cpus;
-          } else {
-            const vmInfo = await getVMInfo(domain);
-            vms.push({
-              name: domain,
-              state: vmInfo.state || 'stopped',
-              memory: vmInfo.memory || '2048 MB',
-              cpus: vmInfo.cpus || 2,
-              diskSize: 'Unknown',
-              imagePath: `${domain}.qcow2`
-            });
-          }
-        }
-      } catch (error) {
-        console.log('Virsh not available or no domains found, showing qcow2 files only');
+        vms.push(vm);
       }
 
       return vms;
@@ -152,17 +180,31 @@ export function setupLibvirtIPC(): void {
 
   ipcMain.handle('libvirt:start-vm', async (_, vmName: string) => {
     try {
-      await executeVirshCommand(`start ${vmName}`);
-      return { success: true };
-    } catch (error: any) {
-      const imagePath = path.join(LIBVIRT_IMAGES_DIR, `${vmName}.qcow2`);
-      if (fs.existsSync(imagePath)) {
-        try {
-          const xmlConfig = `
+      const config = await loadVMConfig();
+      const vmConfig = config.vms.find((vm) => vm.name === vmName);
+
+      if (!vmConfig) {
+        throw new Error(`VM configuration not found for: ${vmName}`);
+      }
+
+      // Try to start the VM if it's already defined
+      try {
+        await executeVirshCommand(`start ${vmName}`);
+        return { success: true };
+      } catch {
+        // If VM is not defined, try to define it first
+        const imageExists = await checkImageExists(vmConfig.imagePath);
+        if (!imageExists) {
+          throw new Error(`VM image does not exist: ${vmConfig.imagePath}`);
+        }
+
+        // Create XML configuration from YAML config
+        const xmlConfig = `
 <domain type='kvm'>
-  <name>${vmName}</name>
-  <memory unit='KiB'>2097152</memory>
-  <vcpu placement='static'>2</vcpu>
+  <name>${vmConfig.name}</name>
+  <description>${vmConfig.description}</description>
+  <memory unit='MiB'>${vmConfig.specs.memory}</memory>
+  <vcpu placement='static'>${vmConfig.specs.cpus}</vcpu>
   <os>
     <type arch='x86_64' machine='pc-q35-6.2'>hvm</type>
     <boot dev='hd'/>
@@ -174,36 +216,34 @@ export function setupLibvirtIPC(): void {
   <devices>
     <disk type='file' device='disk'>
       <driver name='qemu' type='qcow2'/>
-      <source file='${imagePath}'/>
+      <source file='${vmConfig.imagePath}'/>
       <target dev='vda' bus='virtio'/>
     </disk>
     <interface type='network'>
-      <source network='default'/>
+      <source network='${vmConfig.network.interface}'/>
       <model type='virtio'/>
     </interface>
     <console type='pty'>
       <target type='serial' port='0'/>
     </console>
-    <graphics type='vnc' port='-1' autoport='yes' listen='127.0.0.1'/>
+    <graphics type='${vmConfig.graphics.type}' port='${vmConfig.graphics.port}' autoport='yes' listen='127.0.0.1'/>
     <video>
       <model type='qxl' ram='65536' vram='65536' vgamem='16384' heads='1' primary='yes'/>
     </video>
   </devices>
 </domain>`;
 
-          const tempXmlPath = `/tmp/${vmName}.xml`;
-          await fs.promises.writeFile(tempXmlPath, xmlConfig);
-          await executeVirshCommand(`define ${tempXmlPath}`);
-          await executeVirshCommand(`start ${vmName}`);
-          await fs.promises.unlink(tempXmlPath);
+        const tempXmlPath = `/tmp/${vmName}.xml`;
+        await fs.promises.writeFile(tempXmlPath, xmlConfig);
+        await executeVirshCommand(`define ${tempXmlPath}`);
+        await executeVirshCommand(`start ${vmName}`);
+        await fs.promises.unlink(tempXmlPath);
 
-          return { success: true };
-        } catch (defineError) {
-          console.error('Failed to define and start VM:', defineError);
-          throw new Error(`Failed to start VM: ${defineError}`);
-        }
+        return { success: true };
       }
-      throw new Error(`Failed to start VM: ${error.message}`);
+    } catch (error) {
+      const errorMessage = error instanceof Error ? error.message : String(error);
+      throw new Error(`Failed to start VM: ${errorMessage}`);
     }
   });
 
@@ -211,8 +251,9 @@ export function setupLibvirtIPC(): void {
     try {
       await executeVirshCommand(`destroy ${vmName}`);
       return { success: true };
-    } catch (error: any) {
-      throw new Error(`Failed to stop VM: ${error.message}`);
+    } catch (error) {
+      const errorMessage = error instanceof Error ? error.message : String(error);
+      throw new Error(`Failed to stop VM: ${errorMessage}`);
     }
   });
 
@@ -220,14 +261,15 @@ export function setupLibvirtIPC(): void {
     try {
       await executeVirshCommand(`reboot ${vmName}`);
       return { success: true };
-    } catch (error: any) {
+    } catch (_error) {
       try {
         await executeVirshCommand(`destroy ${vmName}`);
-        await new Promise(resolve => setTimeout(resolve, 1000));
+        await new Promise((resolve) => setTimeout(resolve, 1000));
         await executeVirshCommand(`start ${vmName}`);
         return { success: true };
-      } catch (restartError: any) {
-        throw new Error(`Failed to restart VM: ${restartError.message}`);
+      } catch (restartError) {
+        const errorMessage = restartError instanceof Error ? restartError.message : String(restartError);
+        throw new Error(`Failed to restart VM: ${errorMessage}`);
       }
     }
   });
@@ -239,27 +281,33 @@ export function setupLibvirtIPC(): void {
         stdio: 'ignore'
       }).unref();
       return { success: true };
-    } catch (error: any) {
-      throw new Error(`Failed to open virt-manager: ${error.message}`);
+    } catch (error) {
+      const errorMessage = error instanceof Error ? error.message : String(error);
+      throw new Error(`Failed to open virt-manager: ${errorMessage}`);
     }
   });
 
   ipcMain.handle('libvirt:connect-vm', async (_, vmName: string) => {
     try {
-      spawn('virt-viewer', ['-c', 'qemu:///system', vmName], {
+      spawn('virt-viewer', [
+        '-c',
+        'qemu:///system',
+        vmName
+      ], {
         detached: true,
         stdio: 'ignore'
       }).unref();
       return { success: true };
-    } catch (error: any) {
+    } catch (_error) {
       try {
-        spawn('remote-viewer', [`spice://localhost:5900`], {
+        spawn('remote-viewer', ['spice://localhost:5900'], {
           detached: true,
           stdio: 'ignore'
         }).unref();
         return { success: true };
-      } catch (viewerError: any) {
-        throw new Error(`Failed to connect to VM: ${viewerError.message}`);
+      } catch (viewerError) {
+        const errorMessage = viewerError instanceof Error ? viewerError.message : String(viewerError);
+        throw new Error(`Failed to connect to VM: ${errorMessage}`);
       }
     }
   });
@@ -271,8 +319,19 @@ export function setupLibvirtIPC(): void {
         stdio: 'ignore'
       }).unref();
       return { success: true };
-    } catch (error: any) {
-      throw new Error(`Failed to open virt-manager: ${error.message}`);
+    } catch (error) {
+      const errorMessage = error instanceof Error ? error.message : String(error);
+      throw new Error(`Failed to open virt-manager: ${errorMessage}`);
+    }
+  });
+
+  ipcMain.handle('libvirt:reload-config', async () => {
+    try {
+      const config = await loadVMConfig();
+      return { success: true, config };
+    } catch (error) {
+      const errorMessage = error instanceof Error ? error.message : String(error);
+      throw new Error(`Failed to reload configuration: ${errorMessage}`);
     }
   });
 }

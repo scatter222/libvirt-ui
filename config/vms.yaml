@@ -1,0 +1,77 @@
+# Virtual Machine Configuration
+# This file defines all the VMs available in LibVirt UI
+
+vms:
+  - name: SIFT
+    displayName: SIFT Workstation
+    description: SANS Investigative Forensic Toolkit - Ubuntu-based forensics distro
+    category: forensics
+    imagePath: /var/lib/libvirt/images/sift.qcow2
+    specs:
+      memory: 4096  # MB
+      cpus: 2
+      diskSize: 40  # GB
+    features:
+      - Digital forensics tools
+      - Memory analysis
+      - File system analysis
+      - Network forensics
+      - Log analysis
+    os:
+      type: linux
+      distribution: ubuntu
+      version: "20.04"
+    network:
+      type: nat
+      interface: default
+    graphics:
+      type: vnc
+      port: -1  # auto-assign
+    tags:
+      - forensics
+      - dfir
+      - memory-analysis
+      - ubuntu
+    autoStart: false
+
+  - name: REMnux
+    displayName: REMnux
+    description: Linux distro for reverse-engineering and malware analysis
+    category: malware-analysis
+    imagePath: /var/lib/libvirt/images/remnux.qcow2
+    specs:
+      memory: 4096  # MB
+      cpus: 2
+      diskSize: 30  # GB
+    features:
+      - Malware analysis tools
+      - Static analysis
+      - Dynamic analysis
+      - JavaScript deobfuscation
+      - Memory forensics
+      - Network monitoring
+    os:
+      type: linux
+      distribution: ubuntu
+      version: "20.04"
+    network:
+      type: isolated  # For safety when analyzing malware
+      interface: isolated
+    graphics:
+      type: vnc
+      port: -1  # auto-assign
+    tags:
+      - malware-analysis
+      - reversing
+      - sandbox
+      - isolated
+    autoStart: false
+
+# Global Settings
+settings:
+  defaultMemory: 2048
+  defaultCPUs: 2
+  defaultNetwork: nat
+  imagesDirectory: /var/lib/libvirt/images
+  autoRefresh: true
+  refreshInterval: 5000  # milliseconds
