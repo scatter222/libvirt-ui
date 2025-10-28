@@ -1,0 +1,237 @@
+# Web Applications Configuration
+# Browser-based security tools and dashboards
+
+webapps:
+  # SIEM & Log Management
+  - id: splunk
+    name: Splunk
+    displayName: Splunk Enterprise
+    description: Search, monitor, and analyze machine data
+    url: http://localhost:8000
+    category: siem
+    tags: [siem, logs, monitoring, analytics]
+    icon: 📊
+    requiresAuth: true
+    status: unknown
+
+  - id: kibana
+    name: Kibana
+    displayName: Kibana
+    description: Elasticsearch data visualization and exploration
+    url: http://localhost:5601
+    category: siem
+    tags: [elastic, visualization, logs, dashboard]
+    icon: 📈
+    requiresAuth: false
+    status: unknown
+
+  - id: graylog
+    name: Graylog
+    displayName: Graylog
+    description: Open source log management and SIEM
+    url: http://localhost:9000/graylog
+    category: siem
+    tags: [logs, siem, monitoring, alerts]
+    icon: 📝
+    requiresAuth: true
+    status: unknown
+
+  # Network Analysis
+  - id: arkime
+    name: Arkime
+    displayName: Arkime (Moloch)
+    description: Large scale, open source, indexed packet capture and search
+    url: http://localhost:8005
+    category: network
+    tags: [pcap, network, forensics, packet-analysis]
+    icon: 🔍
+    requiresAuth: true
+    status: unknown
+
+  - id: ntopng
+    name: ntopng
+    displayName: ntopng
+    description: Web-based traffic analysis and flow collection
+    url: http://localhost:3001
+    category: network
+    tags: [network, traffic, monitoring, flows]
+    icon: 🌐
+    requiresAuth: true
+    status: unknown
+
+  - id: suricata-eve
+    name: Suricata EVE
+    displayName: Suricata EVE Viewer
+    description: Suricata IDS/IPS event viewer
+    url: http://localhost:8081
+    category: network
+    tags: [ids, ips, network, detection]
+    icon: 🛡️
+    requiresAuth: false
+    status: unknown
+
+  # Monitoring & Metrics
+  - id: grafana
+    name: Grafana
+    displayName: Grafana
+    description: Open source analytics and interactive visualization
+    url: http://localhost:3000
+    category: monitoring
+    tags: [metrics, visualization, monitoring, dashboard]
+    icon: 📉
+    requiresAuth: true
+    status: unknown
+
+  - id: prometheus
+    name: Prometheus
+    displayName: Prometheus
+    description: Systems and service monitoring
+    url: http://localhost:9090
+    category: monitoring
+    tags: [metrics, monitoring, alerting, timeseries]
+    icon: 🎯
+    requiresAuth: false
+    status: unknown
+
+  # Security Analysis Tools
+  - id: cyberchef
+    name: CyberChef
+    displayName: CyberChef
+    description: The Cyber Swiss Army Knife for encoding, decoding, and analyzing data
+    url: http://localhost:8080/cyberchef
+    category: analysis
+    tags: [encoding, decoding, crypto, analysis]
+    icon: 🔐
+    requiresAuth: false
+    status: unknown
+
+  - id: cortex
+    name: Cortex
+    displayName: Cortex
+    description: Observable analysis and active response engine
+    url: http://localhost:9001
+    category: analysis
+    tags: [analysis, automation, observables]
+    icon: 🧠
+    requiresAuth: true
+    status: unknown
+
+  # Threat Intelligence
+  - id: misp
+    name: MISP
+    displayName: MISP Threat Sharing
+    description: Threat intelligence platform for sharing, storing and correlating IOCs
+    url: http://localhost:8443
+    category: threat-intel
+    tags: [threat-intel, ioc, sharing, correlation]
+    icon: 🌐
+    requiresAuth: true
+    status: unknown
+
+  - id: opencti
+    name: OpenCTI
+    displayName: OpenCTI
+    description: Open Cyber Threat Intelligence Platform
+    url: http://localhost:8088
+    category: threat-intel
+    tags: [threat-intel, stix, graph, analysis]
+    icon: 🔗
+    requiresAuth: true
+    status: unknown
+
+  # Incident Response
+  - id: thehive
+    name: TheHive
+    displayName: TheHive
+    description: Security incident response platform
+    url: http://localhost:9000/thehive
+    category: incident-response
+    tags: [incident-response, case-management, collaboration]
+    icon: 🐝
+    requiresAuth: true
+    status: unknown
+
+  - id: dfir-iris
+    name: DFIR-IRIS
+    displayName: DFIR-IRIS
+    description: Incident Response Investigation System
+    url: http://localhost:8000/iris
+    category: incident-response
+    tags: [incident-response, forensics, investigation]
+    icon: 👁️
+    requiresAuth: true
+    status: unknown
+
+  # Vulnerability Management
+  - id: openvas
+    name: OpenVAS
+    displayName: OpenVAS/Greenbone
+    description: Open source vulnerability assessment scanner
+    url: http://localhost:9392
+    category: vulnerability
+    tags: [vulnerability, scanner, assessment]
+    icon: 🛡️
+    requiresAuth: true
+    status: unknown
+
+  - id: defectdojo
+    name: DefectDojo
+    displayName: DefectDojo
+    description: DevSecOps vulnerability management tool
+    url: http://localhost:8080/dojo
+    category: vulnerability
+    tags: [vulnerability, devsecops, tracking]
+    icon: 🥋
+    requiresAuth: true
+    status: unknown
+
+  # Deception & Honeypots
+  - id: cowrie-web
+    name: Cowrie Web
+    displayName: Cowrie Honeypot Dashboard
+    description: SSH/Telnet honeypot monitoring dashboard
+    url: http://localhost:8082
+    category: deception
+    tags: [honeypot, ssh, telnet, monitoring]
+    icon: 🍯
+    requiresAuth: true
+    status: unknown
+
+  - id: t-pot
+    name: T-Pot
+    displayName: T-Pot WebUI
+    description: Multi-honeypot platform dashboard
+    url: http://localhost:64297
+    category: deception
+    tags: [honeypot, multi-pot, monitoring]
+    icon: 🏺
+    requiresAuth: true
+    status: unknown
+
+  # Forensics Tools
+  - id: timesketch
+    name: TimeSketch
+    displayName: TimeSketch
+    description: Collaborative forensic timeline analysis
+    url: http://localhost:5000
+    category: forensics
+    tags: [timeline, forensics, investigation]
+    icon: ⏰
+    requiresAuth: true
+    status: unknown
+
+  - id: grr
+    name: GRR
+    displayName: GRR Rapid Response
+    description: Remote live forensics for incident response
+    url: http://localhost:8083
+    category: forensics
+    tags: [forensics, remote, incident-response]
+    icon: 🚨
+    requiresAuth: true
+    status: unknown
+
+settings:
+  checkStatus: true
+  statusCheckInterval: 30000  # Check status every 30 seconds
+  openInDefaultBrowser: true

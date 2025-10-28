@@ -1,0 +1,330 @@
+# Cybersecurity Tools Configuration
+# Central repository for all security tools available on the system
+
+categories:
+  - id: recon
+    name: Reconnaissance
+    icon: Search
+    color: blue
+    description: Information gathering and enumeration tools
+
+  - id: scanning
+    name: Scanning & Enumeration
+    icon: Radar
+    color: purple
+    description: Network and service discovery tools
+
+  - id: exploitation
+    name: Exploitation
+    icon: Zap
+    color: red
+    description: Vulnerability exploitation frameworks and tools
+
+  - id: post-exploitation
+    name: Post-Exploitation
+    icon: Key
+    color: orange
+    description: Persistence, privilege escalation, and lateral movement
+
+  - id: forensics
+    name: Digital Forensics
+    icon: Fingerprint
+    color: cyan
+    description: Evidence collection and analysis tools
+
+  - id: reverse-engineering
+    name: Reverse Engineering
+    icon: Code
+    color: green
+    description: Binary analysis and reverse engineering tools
+
+  - id: web-security
+    name: Web Security
+    icon: Globe
+    color: indigo
+    description: Web application security testing tools
+
+  - id: wireless
+    name: Wireless Security
+    icon: Wifi
+    color: pink
+    description: Wireless network security tools
+
+missions:
+  - id: bug-bounty
+    name: Bug Bounty Hunting
+    description: Tools for finding and exploiting web vulnerabilities
+    categories: [recon, web-security, scanning]
+
+  - id: red-team
+    name: Red Team Operations
+    description: Complete offensive security toolkit
+    categories: [recon, scanning, exploitation, post-exploitation]
+
+  - id: incident-response
+    name: Incident Response
+    description: Tools for investigating security incidents
+    categories: [forensics, scanning]
+
+  - id: malware-analysis
+    name: Malware Analysis
+    description: Static and dynamic malware analysis tools
+    categories: [reverse-engineering, forensics]
+
+tools:
+  # Reconnaissance Tools
+  - id: nmap
+    name: Nmap
+    displayName: Nmap - Network Mapper
+    description: The industry standard for network discovery and security auditing
+    category: scanning
+    tags: [network, discovery, port-scan, service-detection]
+    launch:
+      type: terminal
+      command: nmap
+      requiresSudo: false
+    documentation:
+      quickStart: "nmap -sV -sC <target> # Version detection with default scripts"
+      examples:
+        - description: "Basic port scan"
+          command: "nmap 192.168.1.1"
+        - description: "Aggressive scan with OS detection"
+          command: "nmap -A -T4 target.com"
+        - description: "Scan entire subnet"
+          command: "nmap 192.168.1.0/24"
+
+  - id: gobuster
+    name: Gobuster
+    displayName: Gobuster - Directory/File Brute-forcer
+    description: Fast directory and file brute-forcing tool written in Go
+    category: recon
+    tags: [web, directory-brute, dns, vhost]
+    launch:
+      type: terminal
+      command: gobuster
+      requiresSudo: false
+    documentation:
+      quickStart: "gobuster dir -u <url> -w <wordlist>"
+      examples:
+        - description: "Directory brute force"
+          command: "gobuster dir -u http://target.com -w /usr/share/wordlists/dirb/common.txt"
+        - description: "DNS subdomain enumeration"
+          command: "gobuster dns -d target.com -w wordlist.txt"
+
+  - id: metasploit
+    name: Metasploit Framework
+    displayName: Metasploit - Exploitation Framework
+    description: The world's most used penetration testing framework
+    category: exploitation
+    tags: [exploitation, post-exploitation, payload, auxiliary]
+    launch:
+      type: terminal
+      command: msfconsole
+      requiresSudo: false
+    documentation:
+      quickStart: "msfconsole # Launch Metasploit console"
+      examples:
+        - description: "Search for exploits"
+          command: "search type:exploit platform:windows"
+        - description: "Use an exploit module"
+          command: "use exploit/windows/smb/ms17_010_eternalblue"
+
+  - id: burpsuite
+    name: Burp Suite
+    displayName: Burp Suite - Web Security Testing
+    description: Integrated platform for web application security testing
+    category: web-security
+    tags: [web, proxy, scanner, intruder]
+    launch:
+      type: gui
+      command: burpsuite
+      requiresSudo: false
+    documentation:
+      quickStart: "Configure browser proxy to 127.0.0.1:8080"
+      examples:
+        - description: "Launch Burp Suite"
+          command: "burpsuite"
+
+  - id: wireshark
+    name: Wireshark
+    displayName: Wireshark - Network Protocol Analyzer
+    description: The world's foremost network protocol analyzer
+    category: forensics
+    tags: [network, packet-capture, analysis, pcap]
+    launch:
+      type: gui
+      command: wireshark
+      requiresSudo: true
+    documentation:
+      quickStart: "Select interface and start capturing"
+      examples:
+        - description: "Capture on eth0"
+          command: "sudo wireshark -i eth0"
+        - description: "Read pcap file"
+          command: "wireshark capture.pcap"
+
+  - id: john
+    name: John the Ripper
+    displayName: John - Password Cracker
+    description: Fast password cracker for various hash types
+    category: exploitation
+    tags: [password, cracking, hash, brute-force]
+    launch:
+      type: terminal
+      command: john
+      requiresSudo: false
+    documentation:
+      quickStart: "john <hashfile>"
+      examples:
+        - description: "Crack with wordlist"
+          command: "john --wordlist=/usr/share/wordlists/rockyou.txt hashes.txt"
+        - description: "Show cracked passwords"
+          command: "john --show hashes.txt"
+
+  - id: sqlmap
+    name: SQLMap
+    displayName: SQLMap - SQL Injection Tool
+    description: Automatic SQL injection and database takeover tool
+    category: web-security
+    tags: [sql-injection, database, web, automation]
+    launch:
+      type: terminal
+      command: sqlmap
+      requiresSudo: false
+    documentation:
+      quickStart: "sqlmap -u '<url>' --dbs"
+      examples:
+        - description: "Test URL for SQL injection"
+          command: "sqlmap -u 'http://target.com/page?id=1'"
+        - description: "Dump database"
+          command: "sqlmap -u '<url>' -D dbname --dump"
+
+  - id: hashcat
+    name: Hashcat
+    displayName: Hashcat - Advanced Password Recovery
+    description: World's fastest password cracker with GPU support
+    category: exploitation
+    tags: [password, cracking, gpu, hash]
+    launch:
+      type: terminal
+      command: hashcat
+      requiresSudo: false
+    documentation:
+      quickStart: "hashcat -m <hash-type> <hashfile> <wordlist>"
+      examples:
+        - description: "Crack MD5 hashes"
+          command: "hashcat -m 0 hashes.txt rockyou.txt"
+        - description: "Show cracked passwords"
+          command: "hashcat --show hashes.txt"
+
+  - id: aircrack-ng
+    name: Aircrack-ng
+    displayName: Aircrack-ng - Wireless Security Suite
+    description: Complete suite for wireless network security assessment
+    category: wireless
+    tags: [wifi, wpa, wep, wireless]
+    launch:
+      type: terminal
+      command: aircrack-ng
+      requiresSudo: true
+    documentation:
+      quickStart: "airmon-ng start wlan0 # Enable monitor mode"
+      examples:
+        - description: "Capture packets"
+          command: "airodump-ng wlan0mon"
+        - description: "Crack WPA handshake"
+          command: "aircrack-ng -w wordlist.txt capture.cap"
+
+  - id: nikto
+    name: Nikto
+    displayName: Nikto - Web Server Scanner
+    description: Web server vulnerability scanner
+    category: web-security
+    tags: [web, scanner, vulnerability, cgi]
+    launch:
+      type: terminal
+      command: nikto
+      requiresSudo: false
+    documentation:
+      quickStart: "nikto -h <target>"
+      examples:
+        - description: "Basic scan"
+          command: "nikto -h http://target.com"
+        - description: "Scan with SSL"
+          command: "nikto -h https://target.com -ssl"
+
+  - id: hydra
+    name: Hydra
+    displayName: Hydra - Network Login Cracker
+    description: Fast and flexible network login cracker
+    category: exploitation
+    tags: [brute-force, password, network, authentication]
+    launch:
+      type: terminal
+      command: hydra
+      requiresSudo: false
+    documentation:
+      quickStart: "hydra -l <user> -P <passlist> <target> <service>"
+      examples:
+        - description: "SSH brute force"
+          command: "hydra -l admin -P pass.txt ssh://192.168.1.1"
+        - description: "Web form attack"
+          command: "hydra -l admin -P pass.txt target.com http-post-form"
+
+  - id: ghidra
+    name: Ghidra
+    displayName: Ghidra - Reverse Engineering Framework
+    description: NSA's software reverse engineering framework
+    category: reverse-engineering
+    tags: [reverse-engineering, disassembler, decompiler, binary-analysis]
+    launch:
+      type: gui
+      command: ghidra
+      requiresSudo: false
+    documentation:
+      quickStart: "Create new project and import binary"
+      examples:
+        - description: "Launch Ghidra"
+          command: "ghidra"
+
+  - id: radare2
+    name: Radare2
+    displayName: Radare2 - Reverse Engineering Framework
+    description: Unix-like reverse engineering framework and command-line toolset
+    category: reverse-engineering
+    tags: [reverse-engineering, disassembler, debugger, binary]
+    launch:
+      type: terminal
+      command: r2
+      requiresSudo: false
+    documentation:
+      quickStart: "r2 <binary> # Open binary for analysis"
+      examples:
+        - description: "Analyze binary"
+          command: "r2 -A binary"
+        - description: "Debug mode"
+          command: "r2 -d binary"
+
+  - id: volatility
+    name: Volatility
+    displayName: Volatility - Memory Forensics
+    description: Advanced memory forensics framework
+    category: forensics
+    tags: [memory, forensics, malware, incident-response]
+    launch:
+      type: terminal
+      command: volatility
+      requiresSudo: false
+    documentation:
+      quickStart: "volatility -f <memory-dump> imageinfo"
+      examples:
+        - description: "Get image info"
+          command: "volatility -f memory.dmp imageinfo"
+        - description: "List processes"
+          command: "volatility -f memory.dmp --profile=<profile> pslist"
+
+settings:
+  defaultTerminal: gnome-terminal
+  defaultLaunchMode: terminal
+  autoRefresh: true
+  refreshInterval: 5000

@@ -4,6 +4,8 @@ import squirrelStartup from 'electron-squirrel-startup';
 
 import { createAppWindow } from './appWindow';
 import { setupLibvirtIPC } from './ipc/libvirtIPC';
+import { setupToolsIPC } from './ipc/toolsIPC';
+import { setupWebAppsIPC } from './ipc/webappsIPC';
 
 process.env.ELECTRON_DISABLE_SECURITY_WARNINGS = 'true';
 
@@ -25,6 +27,8 @@ app.whenReady().then(() => {
  */
 app.on('ready', () => {
   setupLibvirtIPC();
+  setupToolsIPC();
+  setupWebAppsIPC();
   createAppWindow();
 });
 

@@ -67,7 +67,7 @@ export function VMCard ({
               w-2 h-2 rounded-full
               ${state === 'running' ? 'bg-green-400 animate-pulse' : state === 'paused' ? 'bg-yellow-400' : 'bg-gray-400'}
             `}
-          />
+            />
             <span className='capitalize'>{state}</span>
           </Badge>
         </div>
