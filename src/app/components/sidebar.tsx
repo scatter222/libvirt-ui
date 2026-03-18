@@ -1,3 +1,4 @@
+import { ConnectionStatus } from '@/app/components/connection-status';
 import { Home, Server, Terminal, Target, Shield, Settings, Search, BookOpen } from 'lucide-react';
 import { NavLink } from 'react-router-dom';
 
@@ -96,6 +97,11 @@ export function Sidebar () {
           );
         })}
       </nav>
+
+      {/* API Connection Status */}
+      <div className='border-t border-border-light/20'>
+        <ConnectionStatus />
+      </div>
 
       {/* Bottom Section */}
       <div className='p-4 border-t border-border-light/20'>

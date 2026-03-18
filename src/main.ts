@@ -3,11 +3,17 @@ import installExtension, { REACT_DEVELOPER_TOOLS } from 'electron-devtools-insta
 import squirrelStartup from 'electron-squirrel-startup';
 
 import { createAppWindow } from './appWindow';
+import { setupApiIPC } from './ipc/apiIPC';
 import { setupLibvirtIPC } from './ipc/libvirtIPC';
 import { setupToolsIPC } from './ipc/toolsIPC';
 import { setupWebAppsIPC } from './ipc/webappsIPC';
 
 process.env.ELECTRON_DISABLE_SECURITY_WARNINGS = 'true';
+
+// Enable Kerberos/Negotiate authentication for the domain
+// This tells Chromium's network stack to use SPNEGO tokens for matching hosts
+app.commandLine.appendSwitch('auth-server-whitelist', '*.lab.forge.local');
+app.commandLine.appendSwitch('auth-negotiate-delegate-whitelist', '*.lab.forge.local');
 
 /** Handle creating/removing shortcuts on Windows when installing/uninstalling. */
 if (squirrelStartup) {
@@ -29,6 +35,7 @@ app.on('ready', () => {
   setupLibvirtIPC();
   setupToolsIPC();
   setupWebAppsIPC();
+  setupApiIPC();
   createAppWindow();
 });
 
