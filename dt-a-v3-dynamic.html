@@ -1,0 +1,539 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>AEGIS — Digital Terrain</title>
+<style>
+* { margin:0; padding:0; box-sizing:border-box; }
+html,body { width:100vw; height:100vh; overflow:hidden; background:#010810; }
+canvas { position:absolute; inset:0; width:100%; height:100%; }
+#c2{z-index:2;}#c3{z-index:3;}#c4{z-index:4;}
+</style>
+<link href="https://fonts.googleapis.com/css2?family=Share+Tech+Mono&display=swap" rel="stylesheet">
+</head>
+<body>
+<canvas id="c1"></canvas>
+<canvas id="c2"></canvas>
+<canvas id="c3"></canvas>
+<canvas id="c4"></canvas>
+<script>
+// ═════════════════════════════════════════════════════════════════════════
+//  ✏️  EDIT HERE — change label text and colour theme
+// ═════════════════════════════════════════════════════════════════════════
+const CONFIG = {
+
+  // ── Label text ────────────────────────────────────────────────────────
+  title:    'JCOMS  TACTICAL',          // large text below the shield
+  subtitle: 'AEGIS  //  CYBER DEFENCE PLATFORM',  // smaller line beneath
+
+  // ── Colour theme — switch between 'blue' and 'pink' ──────────────────
+  //    or define your own palette in the THEMES object below
+  theme: 'blue',
+
+};
+
+// ── Colour themes ─────────────────────────────────────────────────────────────
+// Each theme defines:
+//   accent     — main glow / UI chrome colour  (r,g,b)
+//   accentAlt  — secondary / intercept beam    (r,g,b)
+//   threat     — incoming missile colour       (r,g,b)
+//   titleLight — title text bright pass        (r,g,b)
+//   titleGlow  — title outer glow              (r,g,b)
+//   terrainLow — terrain face darkest colour   (r,g,b)
+//   terrainHi  — terrain face brightest colour (r,g,b)
+const THEMES = {
+  blue: {
+    accent:      [30,  159, 255],
+    accentAlt:   [0,   220, 255],
+    threat:      [255,  60,  40],
+    titleLight:  [210, 238, 255],
+    titleGlow:   [30,  159, 255],
+    terrainLow:  [[8,28,72],[5,18,50],[3,12,35]],
+    terrainHi:   [[18,70,160],[14,55,130],[10,40,100]],
+    aurora:      'rgba(8,40,120,0.18)',
+    sky0:        '#010509',
+    sky1:        '#020c1e',
+    sky2:        '#040e1c',
+  },
+  pink: {
+    accent:      [255,  60, 180],
+    accentAlt:   [255, 120, 220],
+    threat:      [255, 160,  20],
+    titleLight:  [255, 220, 245],
+    titleGlow:   [255,  60, 180],
+    terrainLow:  [[50,8,35],[38,5,28],[24,3,18]],
+    terrainHi:   [[160,28,100],[130,20,80],[100,14,62]],
+    aurora:      'rgba(100,10,60,0.18)',
+    sky0:        '#0a0209',
+    sky1:        '#160518',
+    sky2:        '#0e0412',
+  },
+};
+
+// Resolve the active palette once — used everywhere below
+const T = THEMES[CONFIG.theme] || THEMES.blue;
+// Shorthand helpers
+const ac  = (a=1) => `rgba(${T.accent.join(',')},${a})`;      // accent colour
+const alt = (a=1) => `rgba(${T.accentAlt.join(',')},${a})`;   // accent alt
+const thr = (a=1) => `rgba(${T.threat.join(',')},${a})`;       // threat colour
+
+const TAU=Math.PI*2, LOOP=16;
+const c1=document.getElementById('c1').getContext('2d');
+const c2=document.getElementById('c2').getContext('2d');
+const c3=document.getElementById('c3').getContext('2d');
+const c4=document.getElementById('c4').getContext('2d');
+
+// ── DYNAMIC SIZING ───────────────────────────────────────────────────────────
+let W=window.innerWidth, H=window.innerHeight;
+
+function resizeCanvases(){
+  // Guard: never let W or H be 0 — that would divide-by-zero in terrainH
+  // and corrupt the Delaunay triangulation with NaN coordinates.
+  const w=window.innerWidth  || document.documentElement.clientWidth  || 1920;
+  const h=window.innerHeight || document.documentElement.clientHeight || 1080;
+  if(w<10||h<10)return; // layout not ready yet, skip
+  W=w; H=h;
+  [c1,c2,c3,c4].forEach(ctx=>{
+    ctx.canvas.width=W; ctx.canvas.height=H;
+  });
+}
+resizeCanvases();
+
+window.addEventListener('resize',()=>{
+  resizeCanvases();
+  // Debounce: wait 100ms after resize stops before rebuilding the heavy terrain mesh
+  clearTimeout(window._rebuildTimer);
+  window._rebuildTimer=setTimeout(rebuildScene, 100);
+});
+
+// ── UTILS ────────────────────────────────────────────────────────────────────
+function rand(a,b){return a+Math.random()*(b-a);}
+function lerp(a,b,t){return a+(b-a)*t;}
+function clamp(v,a,b){return Math.max(a,Math.min(b,v));}
+
+// ── DELAUNAY ─────────────────────────────────────────────────────────────────
+function delaunay(points){
+  const BIG=12000,sp=[[-BIG,-BIG],[W+BIG*2,-BIG],[W/2,H+BIG*2]],all=[...points,...sp];
+  let tris=[[points.length,points.length+1,points.length+2]];
+  for(let pi=0;pi<points.length;pi++){
+    const p=all[pi];let bad=[],poly=[];
+    for(let ti=0;ti<tris.length;ti++){
+      const[ax,ay]=all[tris[ti][0]],[bx,by]=all[tris[ti][1]],[cx,cy]=all[tris[ti][2]];
+      const D=2*(ax*(by-cy)+bx*(cy-ay)+cx*(ay-by));if(Math.abs(D)<1e-10)continue;
+      const ux=((ax*ax+ay*ay)*(by-cy)+(bx*bx+by*by)*(cy-ay)+(cx*cx+cy*cy)*(ay-by))/D;
+      const uy=((ax*ax+ay*ay)*(cx-bx)+(bx*bx+by*by)*(ax-cx)+(cx*cx+cy*cy)*(bx-ax))/D;
+      if((p[0]-ux)**2+(p[1]-uy)**2<=(ax-ux)**2+(ay-uy)**2+1e-8)bad.push(ti);
+    }
+    for(const ti of bad){
+      [[tris[ti][0],tris[ti][1]],[tris[ti][1],tris[ti][2]],[tris[ti][2],tris[ti][0]]].forEach(e=>{
+        let s=false;for(const tj of bad){if(tj===ti)continue;
+          [[tris[tj][0],tris[tj][1]],[tris[tj][1],tris[tj][2]],[tris[tj][2],tris[tj][0]]].forEach(f=>{
+            if((e[0]===f[0]&&e[1]===f[1])||(e[0]===f[1]&&e[1]===f[0]))s=true;});}
+        if(!s)poly.push(e);});
+    }
+    tris=tris.filter((_,i)=>!bad.includes(i));
+    poly.forEach(e=>tris.push([e[0],e[1],pi]));
+  }
+  return tris.filter(t=>!t.some(i=>i>=points.length));
+}
+
+// ── TERRAIN HEIGHT ───────────────────────────────────────────────────────────
+// Pure function — reads W from outer scope, safe after any resize
+function terrainH(x,seed=0){
+  const nx=x/W; let h=0;
+  h+=Math.sin(nx*Math.PI*1.8+seed+0.3)*210;
+  h+=Math.sin(nx*Math.PI*3.1+seed+1.4)*120;
+  h+=Math.sin(nx*Math.PI*2.3+seed+2.7)*95;
+  h+=Math.sin(nx*Math.PI*6.2+seed+0.8)*48;
+  h+=Math.sin(nx*Math.PI*9.7+seed+1.9)*28;
+  h+=Math.sin(nx*Math.PI*14 +seed+3.1)*15;
+  h+=Math.sin(nx*Math.PI*22 +seed+0.4)*9;
+  h+=Math.sin(nx*Math.PI*31 +seed+2.2)*6;
+  return h;
+}
+
+// ── BUILD TERRAIN LAYER ──────────────────────────────────────────────────────
+// Takes a layer definition, returns pre-computed face data ready to draw
+function buildTerrainLayer(layer){
+  const{seed,baseY,amplitude,colorBase,colorPeak,fog}=layer;
+  const COLS=80, pts=[];
+  for(let c=0;c<=COLS;c++){
+    const x=c/COLS*W, hy=baseY+terrainH(x,seed)*amplitude;
+    pts.push([x,hy],[x,hy+rand(15,50)],[x,hy+rand(50,120)],[x+rand(-8,8),hy+rand(120,240)]);
+  }
+  for(let x=0;x<=W;x+=W/20) pts.push([x,H+10]);
+  for(let i=0;i<200;i++){
+    const x=rand(0,W), sy=baseY+terrainH(x,seed)*amplitude;
+    pts.push([x,rand(sy+5,H+10)]);
+  }
+  const tris=delaunay(pts);
+  const faces=[];
+  tris.forEach(t=>{
+    const[ax,ay]=pts[t[0]],[bx,by]=pts[t[1]],[cx,cy]=pts[t[2]];
+    const mx=(ax+bx+cx)/3, my=(ay+by+cy)/3;
+    const surfY=baseY+terrainH(mx,seed)*amplitude;
+    if(my<surfY-8)return;
+    const altitude=clamp(1-(my-surfY)/(baseY+150-surfY),0,1);
+    const dx2=ax-cx, dy2=ay-cy, nx2=-dy2, ny2=dx2;
+    const lightFactor=clamp((nx2*-0.6+ny2*-0.8)/Math.hypot(nx2,ny2),0,1);
+    const peakDist=Math.hypot(mx-PEAK_X,my-PEAK_Y_NEAR)/300;
+    const peakGlow=Math.max(0,1-peakDist);
+    const t2=clamp(altitude*0.7+lightFactor*0.2+peakGlow*0.15+rand(-.04,.04),0,1);
+    const r=lerp(colorBase[0],colorPeak[0],t2);
+    const g=lerp(colorBase[1],colorPeak[1],t2);
+    const b=lerp(colorBase[2],colorPeak[2],t2)+peakGlow*30;
+    const edgeBright=altitude>0.6||lightFactor>0.5;
+    faces.push({ax,ay,bx,by,cx,cy,r,g,b,edgeBright,altitude,fog});
+  });
+  return{faces,seed,baseY,amplitude,edge:layer.edge};
+}
+
+// ── BUILD SHIELD ─────────────────────────────────────────────────────────────
+function buildShield(cx,cy,sr){
+  const TOP=-sr*.82,BOT=sr*1.12,steps=22,outline=[];
+  for(let i=0;i<=steps;i++){
+    const t=i/steps,cv=t<.35?0:Math.pow((t-.35)/.65,1.65);
+    outline.push([cx-(sr*.94*(1-cv)),cy+TOP+(BOT-TOP)*t]);
+  }
+  for(let i=steps;i>=0;i--){
+    const t=i/steps,cv=t<.35?0:Math.pow((t-.35)/.65,1.65);
+    outline.push([cx+(sr*.94*(1-cv)),cy+TOP+(BOT-TOP)*t]);
+  }
+  const interior=[];
+  for(let a=0;a<700;a++){
+    const rx=rand(-sr*.9,sr*.9),ry=rand(TOP,BOT);
+    const ny=(ry-TOP)/(BOT-TOP),cv=ny<.35?0:Math.pow((ny-.35)/.65,1.65);
+    if(Math.abs(rx)<sr*.94*(1-cv)-5)interior.push([cx+rx,cy+ry]);
+  }
+  const all=[...interior,...outline];
+  const tris=delaunay(all).filter(t=>{
+    const[ax,ay]=all[t[0]],[bx,by]=all[t[1]],[cx2,cy2]=all[t[2]];
+    const mx=(ax+bx+cx2)/3,my=(ay+by+cy2)/3;
+    const dy=(my-cy-TOP)/(BOT-TOP);if(dy<0||dy>1)return false;
+    const cv=dy<.35?0:Math.pow((dy-.35)/.65,1.65);
+    return Math.abs(mx-cx)<sr*.94*(1-cv)-3;
+  });
+  const faceData=tris.map(t=>{
+    const[ax,ay]=all[t[0]],[bx,by]=all[t[1]],[cx2,cy2]=all[t[2]];
+    const mx=(ax+bx+cx2)/3,my=(ay+by+cy2)/3;
+    const centreProx=1-Math.hypot(mx-cx,my-cy)/sr;
+    const catchLight=Math.random()<0.15+centreProx*0.12;
+    const brightness=catchLight?rand(.55,.95):rand(.03,.22);
+    const hueLean=rand(0,1);
+    return{t,pts:all,brightness,catchLight,hueLean};
+  });
+  return{faceData,outline,cx,cy,sr,TOP,BOT};
+}
+
+// ── DRAW SHIELD ──────────────────────────────────────────────────────────────
+function drawShield(ctx,sh,elapsed,alpha=1){
+  const{faceData,outline,cx,cy}=sh;
+  ctx.save(); ctx.globalAlpha=alpha;
+  const shimmer=Math.sin(elapsed*TAU/LOOP*2)*0.06;
+  const pulse=0.7+Math.sin(elapsed*TAU/LOOP*1.5)*0.3;
+  faceData.forEach(f=>{
+    const[ax,ay]=f.pts[f.t[0]],[bx,by]=f.pts[f.t[1]],[cx2,cy2]=f.pts[f.t[2]];
+    const br=clamp(f.brightness+shimmer*(f.catchLight?1.8:0.3),0,1);
+    ctx.beginPath();ctx.moveTo(ax,ay);ctx.lineTo(bx,by);ctx.lineTo(cx2,cy2);ctx.closePath();
+    ctx.fillStyle=`rgb(${Math.round(br*(f.hueLean<0.3?6:12))},${Math.round(br*(120+f.hueLean*40))},${Math.round(br*255)})`;
+    ctx.fill();
+    ctx.strokeStyle=f.catchLight?`rgba(120,230,255,${0.55*pulse})`:'rgba(20,100,200,0.14)';
+    ctx.lineWidth=f.catchLight?1.1:0.5; ctx.stroke();
+  });
+  for(let i=4;i>=1;i--){
+    ctx.save();ctx.shadowColor='rgba(30,160,255,1)';ctx.shadowBlur=i*16;
+    ctx.beginPath();outline.forEach(([x,y],j)=>j===0?ctx.moveTo(x,y):ctx.lineTo(x,y));
+    ctx.closePath();ctx.strokeStyle=`rgba(30,160,255,${0.07*(5-i)*pulse})`;
+    ctx.lineWidth=i*3.5;ctx.stroke();ctx.restore();
+  }
+  ctx.beginPath();outline.forEach(([x,y],j)=>j===0?ctx.moveTo(x,y):ctx.lineTo(x,y));
+  ctx.closePath();ctx.strokeStyle=`rgba(100,210,255,${0.75*pulse})`;ctx.lineWidth=1.6;ctx.stroke();
+  ctx.restore();
+}
+
+// ── DRAW TOPO LINES ──────────────────────────────────────────────────────────
+function drawTopoLines(ctx){
+  const layer=TERRAIN_LAYERS[2];
+  ctx.save();
+  for(let elev=60;elev<=500;elev+=60){
+    const ty=layer.baseY-elev+terrainH(W*.5,layer.seed)*layer.amplitude;
+    ctx.beginPath(); let drawing=false;
+    for(let x=0;x<=W;x+=3){
+      const surfY=layer.baseY+terrainH(x,layer.seed)*layer.amplitude;
+      if(surfY<=ty+2){ drawing?ctx.lineTo(x,ty):ctx.moveTo(x,ty); drawing=true; }
+      else { drawing=false; }
+    }
+    ctx.strokeStyle=ac(0.05+elev/500*0.06);ctx.lineWidth=0.8;ctx.stroke();
+  }
+  ctx.restore();
+}
+
+// ── SCENE STATE (rebuilt on resize) ──────────────────────────────────────────
+let TERRAIN_LAYERS, PEAK_X, PEAK_Y_NEAR, LAYERS, SHIELD, MISSILES, PARTICLES;
+
+// ── REBUILD SCENE ────────────────────────────────────────────────────────────
+// Called once on load and again on every resize.
+// Re-derives all W/H-dependent layout values and redraws the static canvases.
+function rebuildScene(){
+  // Safety: if W or H isn't valid yet, retry after a short delay
+  if(!W||!H||W<10||H<10){
+    setTimeout(rebuildScene, 50);
+    return;
+  }
+  c1.clearRect(0,0,W,H);
+  c2.clearRect(0,0,W,H);
+
+  // Layer definitions — all Y values are H-relative fractions
+  TERRAIN_LAYERS=[
+    {seed:0.0,baseY:H*.52,amplitude:1.0, colorBase:T.terrainLow[0],colorPeak:T.terrainHi[0],edge:ac(.25),fog:0.55},
+    {seed:1.8,baseY:H*.62,amplitude:0.78,colorBase:T.terrainLow[1],colorPeak:T.terrainHi[1],edge:ac(.35),fog:0.35},
+    {seed:3.5,baseY:H*.72,amplitude:0.62,colorBase:T.terrainLow[2],colorPeak:T.terrainHi[2],edge:ac(.5), fog:0.0},
+  ];
+  PEAK_X      = W*0.5;
+  PEAK_Y_NEAR = TERRAIN_LAYERS[2].baseY + terrainH(PEAK_X,TERRAIN_LAYERS[2].seed)*TERRAIN_LAYERS[2].amplitude - 22;
+
+  // ── Sky + stars ────────────────────────────────────────────────────────────
+  const skyG=c1.createLinearGradient(0,0,0,H*0.65);
+  skyG.addColorStop(0,T.sky0);skyG.addColorStop(0.35,T.sky1);skyG.addColorStop(1,T.sky2);
+  c1.fillStyle=skyG; c1.fillRect(0,0,W,H);
+  for(let i=0;i<220;i++){
+    const x=rand(0,W),y=rand(0,H*.58),r=rand(.3,1.6),a=rand(.2,.85);
+    c1.beginPath();c1.arc(x,y,r,0,TAU);
+    c1.fillStyle=`rgba(${180+rand(0,60)},${200+rand(0,40)},255,${a})`;c1.fill();
+  }
+  const aurora=c1.createRadialGradient(W*.5,H*.48,0,W*.5,H*.48,W*.55);
+  aurora.addColorStop(0,T.aurora);aurora.addColorStop(0.4,T.aurora.replace(/[^,]+\)$/,'0.07)'));aurora.addColorStop(1,'rgba(0,0,0,0)');
+  c1.fillStyle=aurora; c1.fillRect(0,0,W,H*.65);
+  [H*.38,H*.44,H*.50].forEach((y,i)=>{
+    const ag=c1.createLinearGradient(0,y-20,0,y+20);
+    ag.addColorStop(0,'rgba(0,0,0,0)');ag.addColorStop(0.5,`rgba(${T.accent[0]},${Math.round(T.accent[1]*.5)},${T.accent[2]},${0.06-i*.015})`);ag.addColorStop(1,'rgba(0,0,0,0)');
+    c1.fillStyle=ag; c1.fillRect(0,y-20,W,40);
+  });
+
+  // ── Build and draw terrain layers to c2 ────────────────────────────────────
+  LAYERS=TERRAIN_LAYERS.map(buildTerrainLayer);
+  LAYERS.forEach(layer=>{
+    layer.faces.forEach(f=>{
+      c2.beginPath();c2.moveTo(f.ax,f.ay);c2.lineTo(f.bx,f.by);c2.lineTo(f.cx,f.cy);c2.closePath();
+      c2.fillStyle=`rgb(${Math.round(f.r)},${Math.round(f.g)},${Math.round(f.b)})`;c2.fill();
+      c2.strokeStyle=f.edgeBright?ac(0.2+f.altitude*0.2):ac(0.08+f.altitude*0.1);
+      c2.lineWidth=f.edgeBright?0.9:0.5; c2.stroke();
+    });
+    const COLS=80;
+    c2.beginPath();
+    for(let ci=0;ci<=COLS;ci++){
+      const x=ci/COLS*W,y=layer.baseY+terrainH(x,layer.seed)*layer.amplitude;
+      ci===0?c2.moveTo(x,y):c2.lineTo(x,y);
+    }
+    c2.strokeStyle=layer.edge; c2.lineWidth=1.8; c2.stroke();
+  });
+
+  // ── Shield ─────────────────────────────────────────────────────────────────
+  SHIELD=buildShield(PEAK_X, PEAK_Y_NEAR-55, 120);
+
+  // ── Missiles ───────────────────────────────────────────────────────────────
+  MISSILES=Array.from({length:14},()=>{
+    const edge=Math.floor(rand(0,3));
+    let fromX,fromY;
+    if(edge===0){fromX=rand(50,W-50);fromY=rand(-180,-60);}
+    else if(edge===1){fromX=rand(-120,-40);fromY=rand(-80,H*.4);}
+    else{fromX=rand(W+40,W+120);fromY=rand(-80,H*.4);}
+    const m={fromX,fromY,targetX:PEAK_X+rand(-80,80),targetY:PEAK_Y_NEAR-60+rand(-20,20),
+             phase:rand(0,LOOP),cycleT:rand(3,6),size:rand(3.5,7),speed:rand(0.7,1.0)};
+    m.interceptAt=rand(0.50,0.68);
+    m.beamFireAt =m.interceptAt-rand(0.10,0.18);
+    return m;
+  });
+
+  // ── Particles ──────────────────────────────────────────────────────────────
+  PARTICLES=Array.from({length:55},()=>({
+    x:rand(0,W),y:rand(H*.1,H*.55),
+    vx:rand(-.1,.1),vy:rand(-.08,.08),
+    r:rand(.6,2.2),a:rand(.08,.3),ph:rand(0,TAU),
+  }));
+}
+
+// ── ANIMATE ──────────────────────────────────────────────────────────────────
+let t0=null;
+function animate(ts){
+  if(!t0)t0=ts;
+  const el=(ts-t0)/1000, t=el%LOOP;
+  c3.clearRect(0,0,W,H); c4.clearRect(0,0,W,H);
+
+  // Fog between terrain layers
+  TERRAIN_LAYERS.forEach(layer=>{
+    if(layer.fog<=0)return;
+    const fogY=layer.baseY+terrainH(W*.5,layer.seed)*layer.amplitude;
+    const fg=c3.createLinearGradient(0,fogY-40,0,fogY+80);
+    fg.addColorStop(0,'rgba(0,0,0,0)');fg.addColorStop(0.4,`rgba(8,25,60,${layer.fog*0.15})`);fg.addColorStop(1,'rgba(0,0,0,0)');
+    c3.fillStyle=fg; c3.fillRect(0,fogY-40,W,120);
+  });
+
+  // Topo lines
+  drawTopoLines(c3);
+
+  // Atmosphere haze
+  const haze=c3.createLinearGradient(0,H*.50,0,H*.68);
+  haze.addColorStop(0,'rgba(0,0,0,0)');haze.addColorStop(0.5,`rgba(10,30,80,${0.08+Math.sin(t*TAU/LOOP)*0.02})`);haze.addColorStop(1,'rgba(0,0,0,0)');
+  c3.fillStyle=haze; c3.fillRect(0,H*.50,W,H*.18);
+
+  // Beacon glow on peak
+  const beaconPulse=0.6+Math.sin(t*TAU/LOOP*2)*0.4;
+  const bg=c3.createRadialGradient(PEAK_X,PEAK_Y_NEAR,0,PEAK_X,PEAK_Y_NEAR,280);
+  bg.addColorStop(0,ac(0.18*beaconPulse));bg.addColorStop(0.4,ac(0.08*beaconPulse));bg.addColorStop(1,'rgba(0,0,0,0)');
+  c3.fillStyle=bg; c3.fillRect(PEAK_X-300,PEAK_Y_NEAR-200,600,420);
+
+  // Intercept beams from shield to missile intercept point
+  MISSILES.forEach(m=>{
+    const lt=(el+m.phase)%m.cycleT, prog=lt/m.cycleT*m.speed;
+    if(prog<m.beamFireAt||prog>=m.interceptAt+0.18)return;
+    const ip=m.interceptAt;
+    const ix=lerp(m.fromX,m.targetX,ip);
+    const iy=lerp(m.fromY,m.targetY,ip)-Math.sin(ip*Math.PI)*180;
+    const beamProg=clamp((prog-m.beamFireAt)/(m.interceptAt-m.beamFireAt),0,1);
+    const bx=lerp(PEAK_X,ix,beamProg), by=lerp(PEAK_Y_NEAR-55,iy,beamProg);
+    if(prog<m.interceptAt){
+      c3.save();
+      c3.shadowColor=alt(0.9);c3.shadowBlur=14;
+      const bg2=c3.createLinearGradient(PEAK_X,PEAK_Y_NEAR-55,bx,by);
+      bg2.addColorStop(0,alt(0.55));bg2.addColorStop(0.7,alt(0.45));bg2.addColorStop(1,alt(0.9));
+      c3.strokeStyle=bg2;c3.lineWidth=2+beamProg;c3.lineCap='round';
+      c3.beginPath();c3.moveTo(PEAK_X,PEAK_Y_NEAR-55);c3.lineTo(bx,by);c3.stroke();
+      c3.beginPath();c3.arc(bx,by,4,0,TAU);c3.fillStyle=alt(0.95);c3.fill();
+      c3.beginPath();c3.arc(PEAK_X,PEAK_Y_NEAR-55,5,0,TAU);c3.fillStyle=alt(0.5);c3.fill();
+      c3.restore();
+    }
+  });
+
+  // Missiles + explosions
+  MISSILES.forEach(m=>{
+    const lt=(el+m.phase)%m.cycleT, prog=lt/m.cycleT*m.speed;
+    if(prog>=1)return;
+    const px=lerp(m.fromX,m.targetX,prog);
+    const py=lerp(m.fromY,m.targetY,prog)-Math.sin(prog*Math.PI)*180;
+    const alive=prog<m.interceptAt;
+    const hitting=prog>=m.interceptAt&&prog<m.interceptAt+0.18;
+    if(alive){
+      const pa=clamp(0.6+Math.sin(el*4+m.phase)*.2,0,1);
+      const prevProg=Math.max(0,prog-0.12);
+      const prevPx=lerp(m.fromX,m.targetX,prevProg);
+      const prevPy=lerp(m.fromY,m.targetY,prevProg)-Math.sin(prevProg*Math.PI)*180;
+      c3.save();
+      const tg=c3.createLinearGradient(prevPx,prevPy,px,py);
+      tg.addColorStop(0,thr(0));tg.addColorStop(0.6,thr(0));tg.addColorStop(1,thr(pa*.7));
+      c3.strokeStyle=tg;c3.lineWidth=m.size*.55;c3.lineCap='round';
+      c3.beginPath();c3.moveTo(prevPx,prevPy);c3.lineTo(px,py);c3.stroke();
+      c3.shadowColor=thr(1);c3.shadowBlur=16;
+      c3.beginPath();c3.arc(px,py,m.size,0,TAU);c3.fillStyle=thr(pa);c3.fill();
+      c3.beginPath();c3.arc(px,py,m.size*.4,0,TAU);c3.fillStyle=`rgba(255,220,200,${pa})`;c3.fill();
+      c3.restore();
+    } else if(hitting){
+      const ep=(prog-m.interceptAt)/0.18;
+      c3.save();c3.globalAlpha=clamp(1-ep,0,1);
+      c3.beginPath();c3.arc(px,py,ep*55,0,TAU);
+      c3.strokeStyle=thr(0.6);c3.lineWidth=3-ep*2;c3.stroke();
+      for(let s=0;s<9;s++){
+        const sa=s/9*TAU+ep, sd=ep*48;
+        c3.beginPath();c3.moveTo(px,py);c3.lineTo(px+Math.cos(sa)*sd,py+Math.sin(sa)*sd);
+        c3.strokeStyle=thr(0.7);c3.lineWidth=1.8;c3.stroke();
+      }
+      if(ep<0.5){
+        const flash=(0.5-ep)/0.5;
+        c3.globalAlpha=flash*0.85;c3.shadowColor='rgba(0,220,255,0.9)';c3.shadowBlur=20;
+        c3.beginPath();c3.arc(px,py,ep*70,0,TAU);
+        c3.strokeStyle=`rgba(0,220,255,${flash*0.8})`;c3.lineWidth=2*(1-ep);c3.stroke();
+        c3.beginPath();c3.arc(px,py,ep*35,0,TAU);
+        c3.strokeStyle=`rgba(120,240,255,${flash*0.6})`;c3.lineWidth=1.5;c3.stroke();
+      }
+      c3.restore();
+    }
+  });
+
+  // Ambient particles
+  PARTICLES.forEach(p=>{
+    const px=((p.x+el*p.vx*60)%W+W)%W;
+    const py=((p.y+el*p.vy*60)%H+H)%H;
+    const pa=p.a*(0.5+Math.sin(el*1.5+p.ph)*.5);
+    c3.beginPath();c3.arc(px,py,p.r,0,TAU);
+    c3.fillStyle=ac(pa);c3.fill();
+  });
+
+  // Shield
+  drawShield(c4,SHIELD,el,0.92);
+
+  // Grid reference
+  c4.save();c4.font='9px "Share Tech Mono"';c4.fillStyle=ac(0.2);
+  for(let x=0;x<W;x+=240){
+    c4.fillText(String(Math.round(x/W*100)).padStart(3,'0')+'E',x+2,H-14);
+  }
+  c4.restore();
+
+  // Scanlines
+  c4.save();c4.fillStyle='rgba(0,0,0,0.03)';
+  for(let y=0;y<H;y+=4)c4.fillRect(0,y,W,2);
+  c4.restore();
+
+  // Corner brackets
+  const bA=0.25+Math.sin(t*TAU/LOOP)*.08;
+  [[24,24,1,1],[W-24,24,-1,1],[24,H-24,1,-1],[W-24,H-24,-1,-1]].forEach(([cx,cy,sx,sy])=>{
+    c4.strokeStyle=ac(bA);c4.lineWidth=1.5;
+    c4.beginPath();c4.moveTo(cx+sx*44,cy);c4.lineTo(cx,cy);c4.lineTo(cx,cy+sy*44);c4.stroke();
+  });
+
+  // ── JCOMS TACTICAL label — sits just below the shield ───────────────
+  // Text position: centred on PEAK_X, just below shield bottom edge
+  const labelY = PEAK_Y_NEAR + SHIELD.BOT + 52;  // shield bottom + padding
+  c4.save();
+  c4.textAlign='center';
+
+  // Rule line above title
+  const lineGrad=c4.createLinearGradient(W*.3,labelY-18,W*.7,labelY-18);
+  lineGrad.addColorStop(0,ac(0));
+  lineGrad.addColorStop(0.3,ac(0.25+Math.sin(t*TAU/LOOP)*0.08));
+  lineGrad.addColorStop(0.7,ac(0.25+Math.sin(t*TAU/LOOP)*0.08));
+  lineGrad.addColorStop(1,ac(0));
+  c4.strokeStyle=lineGrad; c4.lineWidth=0.8;
+  c4.beginPath(); c4.moveTo(W*.3,labelY-18); c4.lineTo(W*.7,labelY-18); c4.stroke();
+
+  // Main title — two passes: outer glow then crisp
+  const titlePulse=0.72+Math.sin(t*TAU/LOOP*1.5)*0.18;
+  c4.font='bold 46px "Share Tech Mono"';
+  c4.shadowColor=`rgba(${T.titleGlow.join(',')},0.9)`; c4.shadowBlur=32;
+  c4.fillStyle=`rgba(${T.accent.join(',')},${titlePulse*0.5})`;
+  c4.fillText(CONFIG.title, W/2, labelY);
+  c4.shadowBlur=10;
+  c4.fillStyle=`rgba(${T.titleLight.join(',')},${titlePulse})`;
+  c4.fillText(CONFIG.title, W/2, labelY);
+
+  // Subtitle
+  c4.shadowBlur=0; c4.shadowColor='transparent';
+  c4.font='11px "Share Tech Mono"';
+  c4.fillStyle=ac(0.45+Math.sin(t*TAU/LOOP)*0.1);
+  c4.fillText(CONFIG.subtitle, W/2, labelY+22);
+
+  c4.restore();
+
+  requestAnimationFrame(animate);
+}
+
+// ── BOOT ─────────────────────────────────────────────────────────────────────
+// Wait for the browser to finish layout before building the terrain mesh.
+// This prevents W/H being 0 in Firefox kiosk / wallpaper mode at startup.
+function boot(){
+  resizeCanvases();
+  if(!W||!H||W<10||H<10){
+    // Layout not ready — retry in 50ms
+    setTimeout(boot,50);
+    return;
+  }
+  rebuildScene();
+  requestAnimationFrame(animate);
+}
+if(document.readyState==='complete'){
+  boot();
+} else {
+  window.addEventListener('load', boot);
+}
+</script>
+</body>
+</html>
