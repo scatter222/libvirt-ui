@@ -1,0 +1,13 @@
+# 1. Kill the wallpaper process
+pkill -f "aegis-wallpaper" 2>/dev/null
+pkill -f "aegis-wallpaper-profile" 2>/dev/null
+
+# 2. Find your Firefox window ID and un-pin it
+for wid in $(xdotool search --name "Mozilla Firefox" 2>/dev/null); do
+  xprop -id "$wid" -f _NET_WM_WINDOW_TYPE 32a -set _NET_WM_WINDOW_TYPE _NET_WM_WINDOW_TYPE_NORMAL
+  xprop -id "$wid" -f _NET_WM_STATE 32a -set _NET_WM_STATE ""
+  wmctrl -i -r "$wid" -b remove,below 2>/dev/null
+  xdotool windowraise "$wid"
+done
+
+# 3. Click your Firefox in the taskbar — it should come back up normally
