@@ -4,7 +4,8 @@ import squirrelStartup from 'electron-squirrel-startup';
 
 import { createAppWindow } from './appWindow';
 import { setupApiIPC } from './ipc/apiIPC';
-import { setupLibvirtIPC } from './ipc/libvirtIPC';
+import { setupLocalVmIPC } from './ipc/localVmIPC';
+import { setupRemoteVmIPC } from './ipc/remoteVmIPC';
 import { setupToolsIPC } from './ipc/toolsIPC';
 import { setupWebAppsIPC } from './ipc/webappsIPC';
 
@@ -32,7 +33,8 @@ app.whenReady().then(() => {
  * Some APIs can only be used after this event occurs.
  */
 app.on('ready', () => {
-  setupLibvirtIPC();
+  setupLocalVmIPC();
+  setupRemoteVmIPC();
   setupToolsIPC();
   setupWebAppsIPC();
   setupApiIPC();

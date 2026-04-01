@@ -50,7 +50,7 @@ export function Dashboard () {
         webAppsList
       ] = await Promise.all([
         electron.ipcRenderer.invoke('tools:list').catch((): unknown[] => []),
-        electron.ipcRenderer.invoke('vms:list').catch((): unknown[] => []),
+        electron.ipcRenderer.invoke('local-vms:list').catch((): unknown[] => []),
         electron.ipcRenderer.invoke('webapps:list').catch((): unknown[] => [])
       ]);
 

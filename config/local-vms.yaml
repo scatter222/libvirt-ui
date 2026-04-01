@@ -1,0 +1,31 @@
+settings:
+  imagesDirectory: /opt/launcher-apps/vms
+  autoRefresh: true
+  refreshInterval: 5000
+
+vms:
+  - name: sift-workstation
+    displayName: SIFT Workstation
+    description: SANS digital forensics and incident response environment
+    category: forensics
+    ovaFile: sift-workstation.ova
+    specs:
+      memory: 4096
+      cpus: 2
+    tags:
+      - forensics
+      - dfir
+      - ubuntu
+
+  - name: remnux
+    displayName: REMnux
+    description: Malware analysis and reverse engineering toolkit
+    category: malware-analysis
+    ovaFile: remnux.ova
+    specs:
+      memory: 4096
+      cpus: 2
+    tags:
+      - malware
+      - reversing
+      - sandbox
