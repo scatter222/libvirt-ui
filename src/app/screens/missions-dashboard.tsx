@@ -55,11 +55,11 @@ export function MissionsDashboard () {
 
         return {
           ...mission,
-          icon: missionIcons[mission.id] || Target,
+          icon: missionIcons[mission.id as string] || Target,
           toolCount: missionTools.length,
           tools: missionTools.slice(0, 5), // Show first 5 tools
-          difficulty: getDifficulty(mission.id),
-          estimatedTime: getEstimatedTime(mission.id)
+          difficulty: getDifficulty(mission.id as string),
+          estimatedTime: getEstimatedTime(mission.id as string)
         };
       });
 
