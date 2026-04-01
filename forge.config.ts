@@ -18,7 +18,7 @@ const config: ForgeConfig = {
     // Create asar archive for main, renderer process files
     asar: true,
     // Set executable name
-    executableName: productName,
+    executableName: 'libvirt-ui',
     // Set application copyright
     appCopyright: `Copyright © ${new Date().getFullYear()} ${author.name}`,
     // Set application icon

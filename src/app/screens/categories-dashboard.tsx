@@ -83,11 +83,11 @@ export function CategoriesDashboard () {
       ]);
 
       // Count tools per category
-      const categoriesWithCounts = categoriesList.map((cat: any) => ({
+      const categoriesWithCounts = categoriesList.map((cat: Record<string, unknown>) => ({
         ...cat,
-        icon: categoryIcons[cat.id] || Shield,
-        color: categoryColors[cat.id] || 'from-gray-500 to-gray-400',
-        toolCount: toolsList.filter((tool: any) => tool.category === cat.id).length
+        icon: categoryIcons[cat.id as string] || Shield,
+        color: categoryColors[cat.id as string] || 'from-gray-500 to-gray-400',
+        toolCount: toolsList.filter((tool: Record<string, unknown>) => tool.category === cat.id).length
       }));
 
       setCategories(categoriesWithCounts);

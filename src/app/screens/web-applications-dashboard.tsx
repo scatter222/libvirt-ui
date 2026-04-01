@@ -245,116 +245,118 @@ export function WebApplicationsDashboard () {
           </div>
 
           {/* Web Apps by Category */}
-          {Object.keys(groupedApps).length === 0 ? (
-            <div className='flex flex-col items-center justify-center py-24 px-8 glass-card rounded-xl animate-slide-up'>
-              <Globe className='w-20 h-20 text-primary/60 mb-6' />
-              <h2 className='text-2xl font-semibold mb-3 text-white/90'>No Applications Found</h2>
-              <p className='text-sm text-text-light/60 text-center max-w-md'>
-                {searchQuery
-                  ? `No web applications match your search "${searchQuery}"`
-                  : 'No web applications available'}
-              </p>
-            </div>
-          ) : (
-            <div className='space-y-8'>
-              {Object.entries(groupedApps).map(([category, apps]) => {
-                const CategoryIcon = categoryIcons[category] || Globe;
-                return (
-                  <div key={category} className='animate-slide-up'>
-                    <div className='flex items-center gap-3 mb-4'>
-                      <CategoryIcon className='w-5 h-5 text-primary' />
-                      <h2 className='text-lg font-semibold text-white/90 capitalize'>
-                        {category.replace('-', ' ')}
-                      </h2>
-                      <span className='text-xs text-text-light/60 bg-dark-300/50 px-2 py-1 rounded-full'>
-                        {apps.length} {apps.length === 1 ? 'app' : 'apps'}
-                      </span>
-                    </div>
-                    <div className='grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-5'>
-                      {apps.map((app) => (
-                        <Card key={app.id} className='relative overflow-hidden glass-card glass-card-hover group'>
-                          {/* Gradient glow effect on hover */}
-                          <div className='absolute -inset-2 bg-gradient-to-tr from-primary/20 to-transparent rounded-xl blur-xl opacity-0 group-hover:opacity-40 transition-opacity duration-500' />
+          {Object.keys(groupedApps).length === 0
+            ? (
+              <div className='flex flex-col items-center justify-center py-24 px-8 glass-card rounded-xl animate-slide-up'>
+                <Globe className='w-20 h-20 text-primary/60 mb-6' />
+                <h2 className='text-2xl font-semibold mb-3 text-white/90'>No Applications Found</h2>
+                <p className='text-sm text-text-light/60 text-center max-w-md'>
+                  {searchQuery
+                    ? `No web applications match your search "${searchQuery}"`
+                    : 'No web applications available'}
+                </p>
+              </div>
+              )
+            : (
+              <div className='space-y-8'>
+                {Object.entries(groupedApps).map(([category, apps]) => {
+                  const CategoryIcon = categoryIcons[category] || Globe;
+                  return (
+                    <div key={category} className='animate-slide-up'>
+                      <div className='flex items-center gap-3 mb-4'>
+                        <CategoryIcon className='w-5 h-5 text-primary' />
+                        <h2 className='text-lg font-semibold text-white/90 capitalize'>
+                          {category.replace('-', ' ')}
+                        </h2>
+                        <span className='text-xs text-text-light/60 bg-dark-300/50 px-2 py-1 rounded-full'>
+                          {apps.length} {apps.length === 1 ? 'app' : 'apps'}
+                        </span>
+                      </div>
+                      <div className='grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-5'>
+                        {apps.map((app) => (
+                          <Card key={app.id} className='relative overflow-hidden glass-card glass-card-hover group'>
+                            {/* Gradient glow effect on hover */}
+                            <div className='absolute -inset-2 bg-gradient-to-tr from-primary/20 to-transparent rounded-xl blur-xl opacity-0 group-hover:opacity-40 transition-opacity duration-500' />
 
-                          {/* Status indicator */}
-                          <div className={`absolute top-0 left-0 right-0 h-0.5 ${
+                            {/* Status indicator */}
+                            <div className={`absolute top-0 left-0 right-0 h-0.5 ${
                             app.status === 'online'
                               ? 'bg-gradient-to-r from-green-500 to-green-400'
                               : app.status === 'offline'
                               ? 'bg-gradient-to-r from-red-500 to-red-400'
                               : 'bg-border-light/30'
                           }`}
-                          />
+                            />
 
-                          <CardHeader className='relative pb-3'>
-                            <div className='flex items-start justify-between'>
-                              <div className='flex-1'>
-                                <div className='flex items-center gap-2'>
-                                  {app.icon && <span className='text-2xl'>{app.icon}</span>}
-                                  <CardTitle className='text-lg font-semibold text-white/95'>
-                                    {app.displayName}
-                                  </CardTitle>
+                            <CardHeader className='relative pb-3'>
+                              <div className='flex items-start justify-between'>
+                                <div className='flex-1'>
+                                  <div className='flex items-center gap-2'>
+                                    {app.icon && <span className='text-2xl'>{app.icon}</span>}
+                                    <CardTitle className='text-lg font-semibold text-white/95'>
+                                      {app.displayName}
+                                    </CardTitle>
+                                  </div>
+                                  <CardDescription className='text-xs text-text-light/80 mt-1'>
+                                    {app.description}
+                                  </CardDescription>
                                 </div>
-                                <CardDescription className='text-xs text-text-light/80 mt-1'>
-                                  {app.description}
-                                </CardDescription>
-                              </div>
-                              <div className={`
+                                <div className={`
                                 w-2 h-2 rounded-full
                                 ${app.status === 'online'
 ? 'bg-green-400 animate-pulse'
                                   : app.status === 'offline' ? 'bg-red-400' : 'bg-gray-400'}
                               `}
-                              />
-                            </div>
-
-                            {/* Tags */}
-                            {app.tags && app.tags.length > 0 && (
-                              <div className='flex flex-wrap items-center gap-1.5 mt-3'>
-                                {app.tags.slice(0, 3).map((tag) => (
-                                  <span
-                                    key={tag}
-                                    className='bg-blue-selected/15 text-blue-selected/90 border border-blue-selected/30 text-xs px-2 py-0.5 rounded-full font-medium'
-                                  >
-                                    {tag}
-                                  </span>
-                                ))}
-                                {app.requiresAuth && (
-                                  <span className='bg-yellow-500/15 text-yellow-400/90 border border-yellow-500/30 text-xs px-2 py-0.5 rounded-full font-medium'>
-                                    auth
-                                  </span>
-                                )}
+                                />
                               </div>
-                            )}
-                          </CardHeader>
 
-                          <CardContent className='relative'>
-                            {/* URL display */}
-                            <div className='bg-dark-100/50 rounded-lg p-2.5 mb-4 border border-border-light/20'>
-                              <p className='text-xs font-mono text-primary/80 truncate'>
-                                {app.url}
-                              </p>
-                            </div>
+                              {/* Tags */}
+                              {app.tags && app.tags.length > 0 && (
+                                <div className='flex flex-wrap items-center gap-1.5 mt-3'>
+                                  {app.tags.slice(0, 3).map((tag) => (
+                                    <span
+                                      key={tag}
+                                      className='bg-blue-selected/15 text-blue-selected/90 border border-blue-selected/30 text-xs px-2 py-0.5 rounded-full font-medium'
+                                    >
+                                      {tag}
+                                    </span>
+                                  ))}
+                                  {app.requiresAuth && (
+                                    <span className='bg-yellow-500/15 text-yellow-400/90 border border-yellow-500/30 text-xs px-2 py-0.5 rounded-full font-medium'>
+                                      auth
+                                    </span>
+                                  )}
+                                </div>
+                              )}
+                            </CardHeader>
 
-                            {/* Launch button */}
-                            <Button
-                              variant='default'
-                              size='sm'
-                              className='w-full h-9 bg-primary hover:bg-primary/90 transition-all hover:shadow-lg hover:shadow-primary/20'
-                              onClick={() => handleLaunchWebApp(app.url)}
-                            >
-                              <ExternalLink className='w-3.5 h-3.5 mr-1.5' />
-                              Open in Browser
-                            </Button>
-                          </CardContent>
-                        </Card>
-                      ))}
+                            <CardContent className='relative'>
+                              {/* URL display */}
+                              <div className='bg-dark-100/50 rounded-lg p-2.5 mb-4 border border-border-light/20'>
+                                <p className='text-xs font-mono text-primary/80 truncate'>
+                                  {app.url}
+                                </p>
+                              </div>
+
+                              {/* Launch button */}
+                              <Button
+                                variant='default'
+                                size='sm'
+                                className='w-full h-9 bg-primary hover:bg-primary/90 transition-all hover:shadow-lg hover:shadow-primary/20'
+                                onClick={() => handleLaunchWebApp(app.url)}
+                              >
+                                <ExternalLink className='w-3.5 h-3.5 mr-1.5' />
+                                Open in Browser
+                              </Button>
+                            </CardContent>
+                          </Card>
+                        ))}
+                      </div>
                     </div>
-                  </div>
-                );
-              })}
-            </div>
-          )}
+                  );
+                })}
+              </div>
+              )}
 
           {/* Status bar */}
           <div className='mt-8 p-4 glass-card rounded-lg flex items-center justify-between text-xs'>

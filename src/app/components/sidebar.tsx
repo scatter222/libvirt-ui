@@ -1,4 +1,5 @@
 import { ConnectionStatus } from '@/app/components/connection-status';
+
 import { Home, Server, Terminal, Target, Shield, Settings, Search, BookOpen } from 'lucide-react';
 import { NavLink } from 'react-router-dom';
 

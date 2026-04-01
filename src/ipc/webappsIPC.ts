@@ -216,7 +216,7 @@ async function checkWebAppStatus (url: string): Promise<'online' | 'offline'> {
 
     clearTimeout(timeout);
     return response.ok ? 'online' : 'offline';
-  } catch (error) {
+  } catch (_error) {
     return 'offline';
   }
 }

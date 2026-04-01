@@ -49,15 +49,15 @@ export function Dashboard () {
         vmsList,
         webAppsList
       ] = await Promise.all([
-        electron.ipcRenderer.invoke('tools:list').catch(() => []),
-        electron.ipcRenderer.invoke('vms:list').catch(() => []),
-        electron.ipcRenderer.invoke('webapps:list').catch(() => [])
+        electron.ipcRenderer.invoke('tools:list').catch((): unknown[] => []),
+        electron.ipcRenderer.invoke('vms:list').catch((): unknown[] => []),
+        electron.ipcRenderer.invoke('webapps:list').catch((): unknown[] => [])
       ]);
 
       setStats({
         totalTools: toolsList.length || 14,
-        activeVMs: vmsList.filter((vm: any) => vm.state === 'running').length || 0,
-        webAppsOnline: webAppsList.filter((app: any) => app.status === 'online').length || 6,
+        activeVMs: vmsList.filter((vm: Record<string, unknown>) => vm.state === 'running').length || 0,
+        webAppsOnline: webAppsList.filter((app: Record<string, unknown>) => app.status === 'online').length || 6,
         diskUsed: 234,
         diskTotal: 500
       });

@@ -1,4 +1,5 @@
 import { useApiConnection } from '@/app/hooks/useApiConnection';
+
 import { Loader2, Wifi, WifiOff, User } from 'lucide-react';
 
 export function ConnectionStatus () {

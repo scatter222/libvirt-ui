@@ -50,8 +50,8 @@ export function MissionsDashboard () {
       const toolsList = await electron.ipcRenderer.invoke('tools:list');
 
       // Enhance missions with tool counts and details
-      const enhancedMissions = missionsList.map((mission: any) => {
-        const missionTools = toolsList.filter((tool: any) => mission.categories.includes(tool.category));
+      const enhancedMissions = missionsList.map((mission: Record<string, unknown>) => {
+        const missionTools = toolsList.filter((tool: Record<string, unknown>) => (mission.categories as string[]).includes(tool.category as string));
 
         return {
           ...mission,
