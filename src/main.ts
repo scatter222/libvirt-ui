@@ -1,4 +1,4 @@
-import { BrowserWindow, app } from 'electron';
+import { BrowserWindow, app, ipcMain, shell } from 'electron';
 import installExtension, { REACT_DEVELOPER_TOOLS } from 'electron-devtools-installer';
 import squirrelStartup from 'electron-squirrel-startup';
 
@@ -38,6 +38,14 @@ app.on('ready', () => {
   setupToolsIPC();
   setupWebAppsIPC();
   setupApiIPC();
+
+  // Generic handler for opening external URLs (used by VM console, etc.)
+  ipcMain.on('open-external', (_event, url: string) => {
+    if (typeof url === 'string' && (url.startsWith('https://') || url.startsWith('http://') || url.startsWith('vnc://'))) {
+      shell.openExternal(url);
+    }
+  });
+
   createAppWindow();
 });
 

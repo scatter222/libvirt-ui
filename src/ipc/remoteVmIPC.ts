@@ -32,7 +32,7 @@ async function loadApiConfig (): Promise<ApiConfig> {
   } catch (_error) {
     return {
       api: {
-        baseUrl: 'https://api.lab.forge.local',
+        baseUrl: 'https://api.lab.forge.local:9444',
         timeout: 10000,
         auth: { method: 'negotiate' }
       }
