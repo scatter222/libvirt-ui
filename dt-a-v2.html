@@ -1,0 +1,537 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>AEGIS — Digital Terrain A</title>
+<style>
+* { margin:0; padding:0; box-sizing:border-box; }
+html,body { width:1920px; height:1080px; overflow:hidden; background:#010810; }
+canvas { position:absolute; inset:0; }
+#c2{z-index:2;}#c3{z-index:3;}#c4{z-index:4;}
+</style>
+<link href="https://fonts.googleapis.com/css2?family=Share+Tech+Mono&display=swap" rel="stylesheet">
+</head>
+<body>
+<canvas id="c1" width="1920" height="1080"></canvas><!-- bg sky -->
+<canvas id="c2" width="1920" height="1080"></canvas><!-- far terrain -->
+<canvas id="c3" width="1920" height="1080"></canvas><!-- near terrain + FX -->
+<canvas id="c4" width="1920" height="1080"></canvas><!-- shield + HUD -->
+<script>
+const W=1920,H=1080,TAU=Math.PI*2,LOOP=16;
+const c1=document.getElementById('c1').getContext('2d');
+const c2=document.getElementById('c2').getContext('2d');
+const c3=document.getElementById('c3').getContext('2d');
+const c4=document.getElementById('c4').getContext('2d');
+
+function rand(a,b){return a+Math.random()*(b-a);}
+function lerp(a,b,t){return a+(b-a)*t;}
+function clamp(v,a,b){return Math.max(a,Math.min(b,v));}
+function smoothstep(e0,e1,x){const t=clamp((x-e0)/(e1-e0),0,1);return t*t*(3-2*t);}
+
+// ── DELAUNAY ──────────────────────────────────────────────────────────
+function delaunay(points){
+  const BIG=12000,sp=[[-BIG,-BIG],[W+BIG*2,-BIG],[W/2,H+BIG*2]],all=[...points,...sp];
+  let tris=[[points.length,points.length+1,points.length+2]];
+  for(let pi=0;pi<points.length;pi++){
+    const p=all[pi];let bad=[],poly=[];
+    for(let ti=0;ti<tris.length;ti++){
+      const[ax,ay]=all[tris[ti][0]],[bx,by]=all[tris[ti][1]],[cx,cy]=all[tris[ti][2]];
+      const D=2*(ax*(by-cy)+bx*(cy-ay)+cx*(ay-by));if(Math.abs(D)<1e-10)continue;
+      const ux=((ax*ax+ay*ay)*(by-cy)+(bx*bx+by*by)*(cy-ay)+(cx*cx+cy*cy)*(ay-by))/D;
+      const uy=((ax*ax+ay*ay)*(cx-bx)+(bx*bx+by*by)*(ax-cx)+(cx*cx+cy*cy)*(bx-ax))/D;
+      if((p[0]-ux)**2+(p[1]-uy)**2<=(ax-ux)**2+(ay-uy)**2+1e-8)bad.push(ti);
+    }
+    for(const ti of bad){
+      [[tris[ti][0],tris[ti][1]],[tris[ti][1],tris[ti][2]],[tris[ti][2],tris[ti][0]]].forEach(e=>{
+        let s=false;for(const tj of bad){if(tj===ti)continue;
+          [[tris[tj][0],tris[tj][1]],[tris[tj][1],tris[tj][2]],[tris[tj][2],tris[tj][0]]].forEach(f=>{if((e[0]===f[0]&&e[1]===f[1])||(e[0]===f[1]&&e[1]===f[0]))s=true;});}
+        if(!s)poly.push(e);});
+    }
+    tris=tris.filter((_,i)=>!bad.includes(i));
+    poly.forEach(e=>tris.push([e[0],e[1],pi]));
+  }
+  return tris.filter(t=>!t.some(i=>i>=points.length));
+}
+
+// ── TERRAIN HEIGHT FUNCTIONS ──────────────────────────────────────────
+// Multi-octave to get organic ridges. Returns y (pixels from top)
+function terrainH(x, seed=0){
+  const nx=x/W;
+  let h=0;
+  // Primary ridges
+  h+=Math.sin(nx*Math.PI*1.8+seed+0.3)*210;
+  h+=Math.sin(nx*Math.PI*3.1+seed+1.4)*120;
+  h+=Math.sin(nx*Math.PI*2.3+seed+2.7)*95;
+  // Secondary detail
+  h+=Math.sin(nx*Math.PI*6.2+seed+0.8)*48;
+  h+=Math.sin(nx*Math.PI*9.7+seed+1.9)*28;
+  h+=Math.sin(nx*Math.PI*14+seed+3.1)*15;
+  // Micro detail
+  h+=Math.sin(nx*Math.PI*22+seed+0.4)*9;
+  h+=Math.sin(nx*Math.PI*31+seed+2.2)*6;
+  return h;
+}
+
+// Three terrain layers: far, mid, near
+const TERRAIN_LAYERS=[
+  { seed:0.0, baseY:H*0.52, amplitude:1.0, colorBase:[8,28,72],   colorPeak:[18,70,160],  edge:'rgba(40,120,220,0.25)', fog:0.55 },
+  { seed:1.8, baseY:H*0.62, amplitude:0.78,colorBase:[5,18,50],   colorPeak:[14,55,130],  edge:'rgba(30,100,200,0.35)', fog:0.35 },
+  { seed:3.5, baseY:H*0.72, amplitude:0.62,colorBase:[3,12,35],   colorPeak:[10,40,100],  edge:'rgba(20,80,180,0.5)',  fog:0.0  },
+];
+
+const PEAK_X=W*0.5;  // fortress peak always centre-screen
+const PEAK_Y_NEAR=TERRAIN_LAYERS[2].baseY + terrainH(PEAK_X, TERRAIN_LAYERS[2].seed)*TERRAIN_LAYERS[2].amplitude - 22;
+
+// ── BUILD TERRAIN LAYERS ──────────────────────────────────────────────
+function buildTerrainLayer(layer){
+  const{seed,baseY,amplitude,colorBase,colorPeak,edge,fog}=layer;
+  const pts=[];
+  const COLS=80;
+
+  // Profile points + jitter
+  for(let c=0;c<=COLS;c++){
+    const x=c/COLS*W;
+    const hy=baseY+terrainH(x,seed)*amplitude;
+    // Multiple rows below surface
+    pts.push([x,hy]);
+    pts.push([x,hy+rand(15,50)]);
+    pts.push([x,hy+rand(50,120)]);
+    pts.push([x+rand(-8,8),hy+rand(120,240)]);
+  }
+  // Floor
+  for(let x=0;x<=W;x+=W/20)pts.push([x,H+10]);
+  // Interior scatter
+  for(let i=0;i<200;i++){
+    const x=rand(0,W);
+    const surfY=baseY+terrainH(x,seed)*amplitude;
+    pts.push([x,rand(surfY+5,H+10)]);
+  }
+
+  const tris=delaunay(pts);
+
+  // Pre-compute face data
+  const faces=[];
+  tris.forEach(t=>{
+    const[ax,ay]=pts[t[0]],[bx,by]=pts[t[1]],[cx,cy]=pts[t[2]];
+    const mx=(ax+bx+cx)/3,my=(ay+by+cy)/3;
+    const surfY=baseY+terrainH(mx,seed)*amplitude;
+    if(my<surfY-8)return; // skip sky triangles
+
+    // Altitude above valley floor
+    const valleyY=baseY+150;
+    const altitude=clamp(1-(my-surfY)/(valleyY-surfY),0,1);
+
+    // Slope: how steep is this face? (use y-extents)
+    const yRange=Math.max(ay,by,cy)-Math.min(ay,by,cy);
+    const slopeFactor=clamp(yRange/40,0,1);
+
+    // Light: faces tilted left catch "light" from upper-left
+    const dx=(ax-cx),dy=(ay-cy);
+    const nx2=-dy,ny2=dx; // face normal approx
+    const lightDir=[-0.6,-0.8];
+    const lightFactor=clamp((nx2*lightDir[0]+ny2*lightDir[1])/Math.hypot(nx2,ny2),0,1);
+
+    // Peak proximity glow (blue glow near centre peak)
+    const peakDist=Math.hypot(mx-PEAK_X,my-PEAK_Y_NEAR)/300;
+    const peakGlow=Math.max(0,1-peakDist);
+
+    // Final colour
+    const t2=clamp(altitude*0.7+lightFactor*0.2+peakGlow*0.15+rand(-.04,.04),0,1);
+    const r=lerp(colorBase[0],colorPeak[0],t2);
+    const g=lerp(colorBase[1],colorPeak[1],t2);
+    const b2=lerp(colorBase[2],colorPeak[2],t2)+peakGlow*30;
+
+    // Edge brightness
+    const edgeBright=altitude>0.6||lightFactor>0.5;
+
+    faces.push({ax,ay,bx,by,cx,cy,r,g,b:b2,edgeBright,altitude,fog});
+  });
+
+  return{pts,faces,seed,baseY,amplitude,edge};
+}
+
+console.log('Building terrain layers...');
+const LAYERS=TERRAIN_LAYERS.map(buildTerrainLayer);
+console.log('Done');
+
+// Draw all terrain layers to c2 (static)
+LAYERS.forEach(layer=>{
+  layer.faces.forEach(f=>{
+    c2.beginPath();c2.moveTo(f.ax,f.ay);c2.lineTo(f.bx,f.by);c2.lineTo(f.cx,f.cy);c2.closePath();
+    c2.fillStyle=`rgb(${Math.round(f.r)},${Math.round(f.g)},${Math.round(f.b)})`;
+    c2.fill();
+    c2.strokeStyle=f.edgeBright?`rgba(40,120,220,${0.2+f.altitude*0.2})`:`rgba(20,60,140,${0.08+f.altitude*0.1})`;
+    c2.lineWidth=f.edgeBright?0.9:0.5;c2.stroke();
+  });
+
+  // Horizon edge line
+  const COLS=80;
+  c2.beginPath();
+  for(let ci=0;ci<=COLS;ci++){
+    const x=ci/COLS*W;
+    const y=layer.baseY+terrainH(x,layer.seed)*layer.amplitude;
+    ci===0?c2.moveTo(x,y):c2.lineTo(x,y);
+  }
+  c2.strokeStyle=layer.edge;c2.lineWidth=1.8;c2.stroke();
+});
+
+// ── SKY BACKGROUND ────────────────────────────────────────────────────
+{
+  const g=c1.createLinearGradient(0,0,0,H*0.65);
+  g.addColorStop(0,'#010509');g.addColorStop(0.35,'#020c1e');g.addColorStop(1,'#040e1c');
+  c1.fillStyle=g;c1.fillRect(0,0,W,H);
+
+  // Stars
+  for(let i=0;i<220;i++){
+    const x=rand(0,W),y=rand(0,H*.58),r=rand(.3,1.6),a=rand(.2,.85);
+    c1.beginPath();c1.arc(x,y,r,0,TAU);
+    c1.fillStyle=`rgba(${180+rand(0,60)},${200+rand(0,40)},255,${a})`;c1.fill();
+  }
+
+  // Aurora-like cyber glow behind mountains
+  const aurora=c1.createRadialGradient(W*.5,H*.48,0,W*.5,H*.48,W*.55);
+  aurora.addColorStop(0,'rgba(8,40,120,0.18)');
+  aurora.addColorStop(0.4,'rgba(10,30,90,0.09)');
+  aurora.addColorStop(1,'rgba(0,0,0,0)');
+  c1.fillStyle=aurora;c1.fillRect(0,0,W,H*.65);
+
+  // Subtle horizontal glow bands (atmosphere)
+  [H*.38,H*.44,H*.50].forEach((y,i)=>{
+    const ag=c1.createLinearGradient(0,y-20,0,y+20);
+    ag.addColorStop(0,'rgba(0,0,0,0)');
+    ag.addColorStop(0.5,`rgba(20,80,160,${0.06-i*.015})`);
+    ag.addColorStop(1,'rgba(0,0,0,0)');
+    c1.fillStyle=ag;c1.fillRect(0,y-20,W,40);
+  });
+}
+
+// ── SHATTERED GLASS SHIELD ────────────────────────────────────────────
+function buildShield(cx,cy,sr){
+  const TOP=-sr*.82,BOT=sr*1.12,steps=22,outline=[];
+  for(let i=0;i<=steps;i++){
+    const t=i/steps,cv=t<.35?0:Math.pow((t-.35)/.65,1.65);
+    outline.push([cx-(sr*.94*(1-cv)),cy+TOP+(BOT-TOP)*t]);
+  }
+  for(let i=steps;i>=0;i--){
+    const t=i/steps,cv=t<.35?0:Math.pow((t-.35)/.65,1.65);
+    outline.push([cx+(sr*.94*(1-cv)),cy+TOP+(BOT-TOP)*t]);
+  }
+  const interior=[];
+  for(let a=0;a<700;a++){
+    const rx=rand(-sr*.9,sr*.9),ry=rand(TOP,BOT);
+    const ny=(ry-TOP)/(BOT-TOP),cv=ny<.35?0:Math.pow((ny-.35)/.65,1.65);
+    if(Math.abs(rx)<sr*.94*(1-cv)-5)interior.push([cx+rx,cy+ry]);
+  }
+  const all=[...interior,...outline];
+  const tris=delaunay(all).filter(t=>{
+    const[ax,ay]=all[t[0]],[bx,by]=all[t[1]],[cx2,cy2]=all[t[2]];
+    const mx=(ax+bx+cx2)/3,my=(ay+by+cy2)/3;
+    const dy=(my-cy-TOP)/(BOT-TOP);if(dy<0||dy>1)return false;
+    const cv=dy<.35?0:Math.pow((dy-.35)/.65,1.65);
+    return Math.abs(mx-cx)<sr*.94*(1-cv)-3;
+  });
+
+  // Pre-assign shard properties (shattered glass aesthetic)
+  const faceData=tris.map(t=>{
+    const[ax,ay]=all[t[0]],[bx,by]=all[t[1]],[cx2,cy2]=all[t[2]];
+    const mx=(ax+bx+cx2)/3,my=(ay+by+cy2)/3;
+    // "catch light" probability — more in upper centre
+    const centreProx=1-Math.hypot(mx-cx,my-cy)/sr;
+    const catchLight=Math.random()<0.15+centreProx*0.12;
+    const brightness=catchLight?rand(.55,.95):rand(.03,.22);
+    // Subtle hue variation — some shards lean cyan, some lean deeper blue
+    const hueLean=rand(0,1);
+    return{t,pts:all,brightness,catchLight,hueLean};
+  });
+  return{faceData,all,outline,cx,cy,sr,TOP,BOT};
+}
+
+const SHIELD=buildShield(PEAK_X, PEAK_Y_NEAR-55, 120);
+
+function drawShield(ctx,sh,elapsed,alpha=1,scale=1){
+  const{faceData,all,outline,cx,cy}=sh;
+  ctx.save();
+  if(scale!==1){ctx.translate(cx,cy);ctx.scale(scale,scale);ctx.translate(-cx,-cy);}
+  ctx.globalAlpha=alpha;
+  const shimmer=Math.sin(elapsed*TAU/LOOP*2)*0.06;
+  const pulse=0.7+Math.sin(elapsed*TAU/LOOP*1.5)*0.3;
+
+  faceData.forEach(f=>{
+    const[ax,ay]=f.pts[f.t[0]],[bx,by]=f.pts[f.t[1]],[cx2,cy2]=f.pts[f.t[2]];
+    const br=clamp(f.brightness+shimmer*(f.catchLight?1.8:0.3),0,1);
+    const rr=Math.round(br*(f.hueLean<0.3?6:12));
+    const gg=Math.round(br*(120+f.hueLean*40));
+    const bb=Math.round(br*255);
+    ctx.beginPath();ctx.moveTo(ax,ay);ctx.lineTo(bx,by);ctx.lineTo(cx2,cy2);ctx.closePath();
+    ctx.fillStyle=`rgb(${rr},${gg},${bb})`;ctx.fill();
+    if(f.catchLight){
+      ctx.strokeStyle=`rgba(120,230,255,${0.55*pulse})`;ctx.lineWidth=1.1;
+    } else {
+      ctx.strokeStyle=`rgba(20,100,200,0.14)`;ctx.lineWidth=0.5;
+    }
+    ctx.stroke();
+  });
+
+  // Glow layers
+  for(let i=4;i>=1;i--){
+    ctx.save();ctx.shadowColor='rgba(30,160,255,1)';ctx.shadowBlur=i*16;
+    ctx.beginPath();outline.forEach(([x,y],j)=>j===0?ctx.moveTo(x,y):ctx.lineTo(x,y));
+    ctx.closePath();ctx.strokeStyle=`rgba(30,160,255,${0.07*(5-i)*pulse})`;
+    ctx.lineWidth=i*3.5;ctx.stroke();ctx.restore();
+  }
+  // Crisp outline
+  ctx.beginPath();outline.forEach(([x,y],j)=>j===0?ctx.moveTo(x,y):ctx.lineTo(x,y));
+  ctx.closePath();ctx.strokeStyle=`rgba(100,210,255,${0.75*pulse})`;ctx.lineWidth=1.6;ctx.stroke();
+  // Inner inset
+  // (skip for brevity, outer is enough)
+  ctx.restore();
+}
+
+// ── MISSILES ──────────────────────────────────────────────────────────
+// Parabolic arcs — proper ballistic trajectory feel
+const MISSILES=Array.from({length:14},(_,i)=>{
+  // Spawn from random edge positions (top + sides)
+  const edge=Math.floor(rand(0,3));
+  let fromX,fromY;
+  if(edge===0){fromX=rand(50,W-50);fromY=rand(-180,-60);}
+  else if(edge===1){fromX=rand(-120,-40);fromY=rand(-80,H*.4);}
+  else{fromX=rand(W+40,W+120);fromY=rand(-80,H*.4);}
+  return{
+    fromX,fromY,
+    targetX: PEAK_X+rand(-80,80),
+    targetY: PEAK_Y_NEAR-60+rand(-20,20),
+    phase:   rand(0,LOOP),
+    cycleT:  rand(3,6),
+    size:    rand(3.5,7),
+    speed:   rand(0.7,1.0),
+  };
+});
+
+// ── INTERCEPT TIMING PER MISSILE ─────────────────────────────────────
+// Each missile is intercepted between 50%-68% of its travel.
+// The shield fires a targeted beam that tracks it down and detonates it.
+MISSILES.forEach(m=>{
+  m.interceptAt = rand(0.50, 0.68);   // progress fraction when it detonates
+  m.beamFireAt  = m.interceptAt - rand(0.10, 0.18); // beam launches just before
+});
+
+
+// ── ATMOSPHERIC PARTICLES ─────────────────────────────────────────────
+const PARTICLES=Array.from({length:55},()=>({
+  x:rand(0,W),y:rand(H*.1,H*.55),
+  vx:rand(-.1,.1),vy:rand(-.08,.08),
+  r:rand(.6,2.2),a:rand(.08,.3),ph:rand(0,TAU),
+}));
+
+// ── TOPO GRID LINES ───────────────────────────────────────────────────
+// Draw contour lines at fixed y intervals on near-layer
+function drawTopoLines(ctx){
+  ctx.save();
+  for(let elev=60;elev<=500;elev+=60){
+    const ty=TERRAIN_LAYERS[2].baseY-elev+terrainH(W*.5,TERRAIN_LAYERS[2].seed)*TERRAIN_LAYERS[2].amplitude;
+    ctx.beginPath();
+    let drawing=false;
+    for(let x=0;x<=W;x+=3){
+      const surfY=TERRAIN_LAYERS[2].baseY+terrainH(x,TERRAIN_LAYERS[2].seed)*TERRAIN_LAYERS[2].amplitude;
+      if(surfY<=ty+2){
+        if(!drawing){ctx.moveTo(x,ty);drawing=true;}
+        else ctx.lineTo(x,ty);
+      } else {drawing=false;}
+    }
+    ctx.strokeStyle=`rgba(30,100,200,${0.05+elev/500*0.06})`;ctx.lineWidth=0.8;ctx.stroke();
+  }
+  ctx.restore();
+}
+
+let t0=null;
+function animate(ts){
+  if(!t0)t0=ts;
+  const el=(ts-t0)/1000, t=el%LOOP;
+  c3.clearRect(0,0,W,H);c4.clearRect(0,0,W,H);
+
+  // ── FOG layers between terrain ridges ─────────────
+  TERRAIN_LAYERS.forEach((layer,li)=>{
+    if(layer.fog<=0)return;
+    const fogY=layer.baseY+terrainH(W*.5,layer.seed)*layer.amplitude;
+    const fg=c3.createLinearGradient(0,fogY-40,0,fogY+80);
+    fg.addColorStop(0,'rgba(0,0,0,0)');
+    fg.addColorStop(0.4,`rgba(8,25,60,${layer.fog*0.15})`);
+    fg.addColorStop(1,'rgba(0,0,0,0)');
+    c3.fillStyle=fg;c3.fillRect(0,fogY-40,W,120);
+  });
+
+  // ── TOPO LINES ─────────────────────────────────────
+  drawTopoLines(c3);
+
+  // ── ATMOSPHERE / HAZE ──────────────────────────────
+  const haze=c3.createLinearGradient(0,H*.50,0,H*.68);
+  haze.addColorStop(0,'rgba(0,0,0,0)');
+  haze.addColorStop(0.5,`rgba(10,30,80,${0.08+Math.sin(t*TAU/LOOP)*0.02})`);
+  haze.addColorStop(1,'rgba(0,0,0,0)');
+  c3.fillStyle=haze;c3.fillRect(0,H*.50,W,H*.18);
+
+  // ── SHIELD PLATFORM GLOW (beacon on peak) ──────────
+  const beaconPulse=0.6+Math.sin(t*TAU/LOOP*2)*0.4;
+  const bg=c3.createRadialGradient(PEAK_X,PEAK_Y_NEAR,0,PEAK_X,PEAK_Y_NEAR,280);
+  bg.addColorStop(0,`rgba(20,100,255,${0.18*beaconPulse})`);
+  bg.addColorStop(0.4,`rgba(10,60,180,${0.08*beaconPulse})`);
+  bg.addColorStop(1,'rgba(0,0,0,0)');
+  c3.fillStyle=bg;c3.fillRect(PEAK_X-300,PEAK_Y_NEAR-200,600,420);
+
+  // ── INTERCEPT BEAMS (targeted, per missile) ──────
+  MISSILES.forEach(m=>{
+    const lt=(el+m.phase)%m.cycleT, prog=lt/m.cycleT*m.speed;
+    if(prog < m.beamFireAt || prog >= m.interceptAt+0.18) return;
+
+    // Missile position at intercept point (where beam is aimed)
+    const ip = m.interceptAt;
+    const ix = lerp(m.fromX, m.targetX, ip);
+    const iy = lerp(m.fromY, m.targetY, ip) - Math.sin(ip*Math.PI)*180;
+
+    // Beam travel: grows from shield toward intercept point
+    const beamProg = clamp((prog - m.beamFireAt) / (m.interceptAt - m.beamFireAt), 0, 1);
+    const bx = lerp(PEAK_X, ix, beamProg);
+    const by = lerp(PEAK_Y_NEAR-55, iy, beamProg);
+
+    if(prog < m.interceptAt) {
+      // Beam in flight — bright cyan line from shield to current beam tip
+      c3.save();
+      c3.shadowColor='rgba(0,220,255,0.9)'; c3.shadowBlur=14;
+      // Beam body
+      const bg2=c3.createLinearGradient(PEAK_X,PEAK_Y_NEAR-55,bx,by);
+      bg2.addColorStop(0,'rgba(80,200,255,0.55)');
+      bg2.addColorStop(0.7,'rgba(60,180,255,0.45)');
+      bg2.addColorStop(1,'rgba(120,240,255,0.9)');
+      c3.strokeStyle=bg2; c3.lineWidth=2+beamProg; c3.lineCap='round';
+      c3.beginPath(); c3.moveTo(PEAK_X,PEAK_Y_NEAR-55); c3.lineTo(bx,by); c3.stroke();
+      // Bright tip
+      c3.beginPath(); c3.arc(bx,by,4,0,TAU);
+      c3.fillStyle='rgba(160,240,255,0.95)'; c3.fill();
+      // Glow dot at shield origin
+      c3.beginPath(); c3.arc(PEAK_X,PEAK_Y_NEAR-55,5,0,TAU);
+      c3.fillStyle='rgba(80,200,255,0.5)'; c3.fill();
+      c3.restore();
+    }
+  });
+
+
+  // ── MISSILES ────────────────────────────────────────
+  MISSILES.forEach(m=>{
+    const lt=(el+m.phase)%m.cycleT,prog=lt/m.cycleT*m.speed;
+    if(prog>=1)return;
+
+    // Parabolic arc: add upward curve in the first half, dive in second
+    const px=lerp(m.fromX,m.targetX,prog);
+    const arcH=-Math.sin(prog*Math.PI)*180; // upward arc
+    const py=lerp(m.fromY,m.targetY,prog)+arcH;
+
+    // Intercept at per-missile interceptAt point
+    const alive = prog < m.interceptAt;
+    const hitting = prog >= m.interceptAt && prog < m.interceptAt + 0.18;
+
+    if(alive){
+      const pa=clamp(0.6+Math.sin(el*4+m.phase)*.2,0,1);
+      // Plasma tail
+      const tailLen=0.12;
+      const prevProg=Math.max(0,prog-tailLen);
+      const prevPx=lerp(m.fromX,m.targetX,prevProg);
+      const prevArcH=-Math.sin(prevProg*Math.PI)*180;
+      const prevPy=lerp(m.fromY,m.targetY,prevProg)+prevArcH;
+
+      c3.save();
+      const tg=c3.createLinearGradient(prevPx,prevPy,px,py);
+      tg.addColorStop(0,'rgba(255,60,40,0)');
+      tg.addColorStop(0.6,'rgba(255,80,40,0)');
+      tg.addColorStop(1,`rgba(255,100,50,${pa*.7})`);
+      c3.strokeStyle=tg;c3.lineWidth=m.size*.55;c3.lineCap='round';
+      c3.beginPath();c3.moveTo(prevPx,prevPy);c3.lineTo(px,py);c3.stroke();
+
+      // Hot nose
+      c3.shadowColor='#ff3322';c3.shadowBlur=16;
+      c3.beginPath();c3.arc(px,py,m.size,0,TAU);
+      c3.fillStyle=`rgba(255,80,50,${pa})`;c3.fill();
+      c3.beginPath();c3.arc(px,py,m.size*.4,0,TAU);
+      c3.fillStyle=`rgba(255,220,180,${pa})`;c3.fill();
+      c3.restore();
+    } else if(hitting){
+      const ep=(prog-m.interceptAt)/0.18;
+      c3.save();
+      c3.globalAlpha=clamp(1-ep,0,1);
+      // Burst ring
+      c3.beginPath();c3.arc(px,py,ep*55,0,TAU);
+      c3.strokeStyle='rgba(255,100,40,0.6)';c3.lineWidth=3-ep*2;c3.stroke();
+      // Shards
+      for(let s=0;s<9;s++){
+        const sa=s/9*TAU+ep;const sd=ep*48;
+        c3.beginPath();c3.moveTo(px,py);
+        c3.lineTo(px+Math.cos(sa)*sd,py+Math.sin(sa)*sd);
+        c3.strokeStyle='rgba(255,140,60,0.7)';c3.lineWidth=1.8;c3.stroke();
+      }
+      // Cyan intercept detonation ring (beam met missile here)
+      if(ep<0.5){
+        const flash=(0.5-ep)/0.5;
+        c3.globalAlpha=flash*0.85;
+        c3.shadowColor='rgba(0,220,255,0.9)'; c3.shadowBlur=20;
+        c3.beginPath(); c3.arc(px,py,ep*70,0,TAU);
+        c3.strokeStyle=`rgba(0,220,255,${flash*0.8})`; c3.lineWidth=2*(1-ep); c3.stroke();
+        c3.beginPath(); c3.arc(px,py,ep*35,0,TAU);
+        c3.strokeStyle=`rgba(120,240,255,${flash*0.6})`; c3.lineWidth=1.5; c3.stroke();
+      }
+      c3.restore();
+    }
+  });
+
+  // ── AMBIENT PARTICLES ───────────────────────────────
+  PARTICLES.forEach(p=>{
+    const px=((p.x+el*p.vx*60)%W+W)%W;
+    const py=((p.y+el*p.vy*60)%H+H)%H;
+    const pa=p.a*(0.5+Math.sin(el*1.5+p.ph)*.5);
+    c3.beginPath();c3.arc(px,py,p.r,0,TAU);
+    c3.fillStyle=`rgba(30,120,220,${pa})`;c3.fill();
+  });
+
+  // ── SHIELD ──────────────────────────────────────────
+  drawShield(c4,SHIELD,el,0.92);
+
+  // ── GRID REFERENCE LINES ───────────────────────────
+  c4.save();c4.font='9px "Share Tech Mono"';c4.fillStyle='rgba(30,100,200,0.2)';
+  for(let x=0;x<W;x+=240){
+    const label=String(Math.round(x/W*100)).padStart(3,'0');
+    c4.fillText(label+'E',x+2,H-14);
+  }
+  c4.restore();
+
+  // ── SCANLINE OVERLAY ────────────────────────────────
+  c4.save();c4.fillStyle='rgba(0,0,0,0.03)';
+  for(let y=0;y<H;y+=4)c4.fillRect(0,y,W,2);
+  c4.restore();
+
+  // ── HUD ELEMENTS ────────────────────────────────────
+  c4.save();
+  c4.font='10px "Share Tech Mono"';c4.textAlign='left';
+  const hud=[['SITE','ALPHA-7'],['STATUS','ACTIVE'],['THREAT LVL','ELEVATED'],['INTERCEPTS',`${MISSILES.length} TARGETS`]];
+  hud.forEach(([k,v],i)=>{
+    c4.fillStyle='rgba(30,120,200,0.28)';c4.fillText(k,38,42+i*18);
+    c4.fillStyle='rgba(80,180,255,0.55)';c4.fillText(v,160,42+i*18);
+  });
+  c4.restore();
+
+  // ── CORNER BRACKETS ─────────────────────────────────
+  const bA=0.25+Math.sin(t*TAU/LOOP)*.08;
+  [[24,24,1,1],[W-24,24,-1,1],[24,H-24,1,-1],[W-24,H-24,-1,-1]].forEach(([cx,cy,sx,sy])=>{
+    c4.strokeStyle=`rgba(30,159,255,${bA})`;c4.lineWidth=1.5;
+    c4.beginPath();c4.moveTo(cx+sx*44,cy);c4.lineTo(cx,cy);c4.lineTo(cx,cy+sy*44);c4.stroke();
+  });
+
+  // Bottom label
+  c4.save();c4.font='10px "Share Tech Mono"';c4.textAlign='center';
+  c4.fillStyle='rgba(30,120,200,0.28)';
+  c4.fillText('AEGIS // DIGITAL TERRAIN // FORWARD OPERATING BASE',W/2,H-14);
+  c4.restore();
+
+  requestAnimationFrame(animate);
+}
+requestAnimationFrame(animate);
+</script>
+</body>
+</html>
