@@ -4,6 +4,7 @@ const stylisticRules = plugins['@stylistic'].configs['all-flat'];
 const typescriptEslintRules = plugins['typescript-eslint'].configs.recommended;
 
 export default [
+  { ignores: ['tests/'] },
   ...neo({
     ts: true,
     semi: true,

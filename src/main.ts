@@ -1,6 +1,5 @@
 import { BrowserWindow, app, ipcMain, shell } from 'electron';
 import installExtension, { REACT_DEVELOPER_TOOLS } from 'electron-devtools-installer';
-import squirrelStartup from 'electron-squirrel-startup';
 
 import { createAppWindow } from './appWindow';
 import { setupApiIPC } from './ipc/apiIPC';
@@ -15,11 +14,6 @@ process.env.ELECTRON_DISABLE_SECURITY_WARNINGS = 'true';
 // This tells Chromium's network stack to use SPNEGO tokens for matching hosts
 app.commandLine.appendSwitch('auth-server-whitelist', '*.lab.forge.local');
 app.commandLine.appendSwitch('auth-negotiate-delegate-whitelist', '*.lab.forge.local');
-
-/** Handle creating/removing shortcuts on Windows when installing/uninstalling. */
-if (squirrelStartup) {
-  app.quit();
-}
 
 app.whenReady().then(() => {
   installExtension(REACT_DEVELOPER_TOOLS)

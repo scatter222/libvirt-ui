@@ -18,6 +18,7 @@ interface LocalVmTemplate {
   description: string;
   category: string;
   ovaFile: string;
+  isoFile?: string;
   specs: {
     memory: number;
     cpus: number;
@@ -161,6 +162,20 @@ export function setupLocalVmIPC (): void {
 
       // Apply configured specs
       await vboxManage(`modifyvm "${vmName}" --memory ${tpl.specs.memory} --cpus ${tpl.specs.cpus}`);
+
+      // Attach boot ISO if configured (e.g. live distro ISOs)
+      if (tpl.isoFile) {
+        const isoPath = path.join(config.settings.imagesDirectory, tpl.isoFile);
+        try {
+          await fs.promises.access(isoPath, fs.constants.F_OK);
+          // Ensure IDE controller exists, add if missing
+          await vboxManage(`storagectl "${vmName}" --name "IDE" --add ide`).catch(() => {});
+          await vboxManage(`storageattach "${vmName}" --storagectl "IDE" --port 0 --device 0 --type dvddrive --medium "${isoPath}"`);
+          await vboxManage(`modifyvm "${vmName}" --boot1 dvd --boot2 disk`);
+        } catch {
+          console.warn(`ISO file not found, skipping: ${isoPath}`);
+        }
+      }
     }
 
     await vboxManage(`startvm "${vmName}" --type gui`);
@@ -168,6 +183,10 @@ export function setupLocalVmIPC (): void {
   });
 
   ipcMain.handle('local-vms:stop', async (_, vmName: string, force?: boolean) => {
+    const state = await getVmState(vmName);
+    if (state !== 'running' && state !== 'paused') {
+      return { success: true };
+    }
     if (force) {
       await vboxManage(`controlvm "${vmName}" poweroff`);
     } else {
@@ -177,10 +196,14 @@ export function setupLocalVmIPC (): void {
   });
 
   ipcMain.handle('local-vms:restart', async (_, vmName: string) => {
+    const state = await getVmState(vmName);
+    if (state !== 'running' && state !== 'paused') {
+      await vboxManage(`startvm "${vmName}" --type gui`);
+      return { success: true };
+    }
     try {
       await vboxManage(`controlvm "${vmName}" reset`);
     } catch (_error) {
-      // If reset fails, try stop then start
       await vboxManage(`controlvm "${vmName}" poweroff`);
       await new Promise((resolve) => setTimeout(resolve, 2000));
       await vboxManage(`startvm "${vmName}" --type gui`);

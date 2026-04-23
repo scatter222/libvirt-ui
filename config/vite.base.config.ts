@@ -3,14 +3,9 @@ import type { AddressInfo } from 'node:net';
 
 import type { ConfigEnv, Plugin, UserConfig } from 'vite';
 
-import pkg from '../package.json';
-
 export const builtins = ['electron', ...builtinModules.flatMap((m) => [m, `node:${m}`])];
 
-export const external = [
-  ...builtins,
-  ...Object.keys('dependencies' in pkg ? (pkg.dependencies as Record<string, unknown>) : {})
-];
+export const external = [...builtins];
 
 export function getBuildConfig (env: ConfigEnv<'build'>): UserConfig {
   const { root, mode, command } = env;
