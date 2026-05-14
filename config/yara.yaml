@@ -1,0 +1,12 @@
+# YARA rules quick-use configuration.
+# Change baseUrl to point at the server hosting the YARA rules API.
+# The launcher uses the dashboard "YARA Rules" quick-use button to read
+# and upload files in the configured folder on the server.
+yara:
+  baseUrl: http://localhost:5000
+  timeout: 10000
+  endpoints:
+    list: /api/yara/rules
+    get: /api/yara/rules
+    upload: /api/yara/rules
+    delete: /api/yara/rules

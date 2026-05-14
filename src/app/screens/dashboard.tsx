@@ -1,9 +1,10 @@
 import { Button } from '@/app/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/app/components/ui/card';
+import { YaraRulesDialog } from '@/app/components/yara-rules-dialog';
 
 import {
   Activity, Terminal, Server, Globe2, TrendingUp,
-  Clock, Network, HardDrive, Download, Settings
+  Clock, Network, HardDrive, Download, FileSearch
 } from 'lucide-react';
 import { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
@@ -36,6 +37,7 @@ export function Dashboard () {
     diskTotal: 500
   });
   const [loading, setLoading] = useState(true);
+  const [yaraDialogOpen, setYaraDialogOpen] = useState(false);
 
   useEffect(() => {
     loadDashboardData();
@@ -263,24 +265,26 @@ export function Dashboard () {
                 <Button
                   variant='default'
                   className='bg-primary hover:bg-primary/90 transition-all hover:shadow-lg hover:shadow-primary/20'
-                  onClick={() => console.log('Export data')}
+                  onClick={() => setYaraDialogOpen(true)}
                 >
-                  <Download className='w-4 h-4 mr-2' />
-                  Export Data
+                  <FileSearch className='w-4 h-4 mr-2' />
+                  YARA Rules
                 </Button>
                 <Button
                   variant='outline'
                   className='border-border-light/50 hover:bg-secondary/50 hover:border-primary/50'
-                  onClick={() => console.log('Do something')}
+                  onClick={() => console.log('Export data')}
                 >
-                  <Settings className='w-4 h-4 mr-2' />
-                  Do Something
+                  <Download className='w-4 h-4 mr-2' />
+                  Export Data
                 </Button>
               </div>
             </CardContent>
           </Card>
         </div>
       </div>
+
+      <YaraRulesDialog open={yaraDialogOpen} onClose={() => setYaraDialogOpen(false)} />
     </div>
   );
 }
