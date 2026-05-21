@@ -1,6 +1,6 @@
 import { Button } from '@/app/components/ui/button';
 
-import { AlertTriangle, Check, FileText, Loader2, RefreshCw, Trash2, Upload, X } from 'lucide-react';
+import { AlertTriangle, Check, FileText, Loader2, RefreshCw, RotateCw, Trash2, Upload, X } from 'lucide-react';
 import { useEffect, useMemo, useRef, useState } from 'react';
 
 interface RuleSet {
@@ -10,6 +10,9 @@ interface RuleSet {
   directory: string;
   allowedExtensions: string[];
   maxFileSizeBytes: number;
+  restartAvailable?: boolean;
+  restartDescription?: string;
+  restartVmName?: string;
 }
 
 interface RuleFileSummary {
@@ -36,6 +39,17 @@ interface ListResponse {
   directory: string;
   count: number;
   files: RuleFileSummary[];
+}
+
+interface RestartResult {
+  success: boolean;
+  vmName?: string;
+  command?: string;
+  exitCode?: number | null;
+  stdout?: string | null;
+  stderr?: string | null;
+  error?: string | null;
+  durationSeconds?: number;
 }
 
 interface PendingUpload {
@@ -67,6 +81,8 @@ export function RulesManagerDialog ({ open, onClose }: RulesManagerDialogProps) 
   const [selectedLoading, setSelectedLoading] = useState(false);
   const [pending, setPending] = useState<PendingUpload | null>(null);
   const [uploading, setUploading] = useState(false);
+  const [restarting, setRestarting] = useState(false);
+  const [restartResult, setRestartResult] = useState<RestartResult | null>(null);
   const [statusMessage, setStatusMessage] = useState<string | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
@@ -133,6 +149,7 @@ export function RulesManagerDialog ({ open, onClose }: RulesManagerDialogProps) 
       setPending(null);
       setStatusMessage(null);
       setError(null);
+      setRestartResult(null);
       loadSets();
     }
   }, [open]);
@@ -142,6 +159,7 @@ export function RulesManagerDialog ({ open, onClose }: RulesManagerDialogProps) 
       setSelected(null);
       setPending(null);
       setStatusMessage(null);
+      setRestartResult(null);
       loadFiles(activeSetId);
     }
   }, [activeSetId, open]);
@@ -217,6 +235,38 @@ export function RulesManagerDialog ({ open, onClose }: RulesManagerDialogProps) 
       await loadFiles(activeSetId);
     } else {
       setError(res.error || 'Delete failed.');
+    }
+  };
+
+  const handleRestart = async () => {
+    if (!activeSet || !activeSet.restartAvailable) return;
+    const label = activeSet.restartVmName
+      ? `Restart ${activeSet.name} in VM "${activeSet.restartVmName}"?`
+      : `Restart ${activeSet.name}?`;
+    if (!confirm(label)) return;
+
+    setRestarting(true);
+    setError(null);
+    setStatusMessage(null);
+    setRestartResult(null);
+    try {
+      const res = await electron.ipcRenderer.invoke('rules:restart', activeSet.id) as {
+        success: boolean;
+        data?: RestartResult;
+        error?: string;
+      };
+      if (res.success && res.data) {
+        setRestartResult(res.data);
+        setStatusMessage(`Restarted ${activeSet.name} on "${res.data.vmName || activeSet.restartVmName}".`);
+      } else {
+        // Structured failure body comes back via res.data even when !success.
+        if (res.data) setRestartResult(res.data);
+        setError(res.error || `Restart failed for ${activeSet.name}.`);
+      }
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setRestarting(false);
     }
   };
 
@@ -393,6 +443,23 @@ export function RulesManagerDialog ({ open, onClose }: RulesManagerDialogProps) 
           </div>
         )}
 
+        {/* Restart result detail (stdout/stderr) */}
+        {restartResult && (restartResult.stdout || restartResult.stderr || restartResult.command) && (
+          <div className='mx-5 mb-2 bg-dark-100/60 border border-border-light/20 rounded-md p-3 text-[11px] text-text-light/80 font-mono space-y-1 max-h-32 overflow-auto'>
+            {restartResult.command && (
+              <div><span className='text-text-light/50'>$</span> {restartResult.command}</div>
+            )}
+            {typeof restartResult.exitCode === 'number' && (
+              <div className='text-text-light/50'>
+                exit={restartResult.exitCode}
+                {typeof restartResult.durationSeconds === 'number' && ` · ${restartResult.durationSeconds.toFixed(1)}s`}
+              </div>
+            )}
+            {restartResult.stdout && <pre className='whitespace-pre-wrap break-words text-text-light/85'>{restartResult.stdout}</pre>}
+            {restartResult.stderr && <pre className='whitespace-pre-wrap break-words text-red-300/80'>{restartResult.stderr}</pre>}
+          </div>
+        )}
+
         {/* Overwrite confirmation */}
         {pending?.needsOverwriteConfirm && (
           <div className='mx-5 mb-2 bg-yellow-500/10 border border-yellow-500/30 rounded-md p-3 flex items-center justify-between gap-3'>
@@ -433,7 +500,7 @@ export function RulesManagerDialog ({ open, onClose }: RulesManagerDialogProps) 
             className='hidden'
             onChange={onFileChange}
           />
-          <div className='text-[11px] text-text-light/50'>
+          <div className='text-[11px] text-text-light/50 min-w-0 flex-1'>
             {activeSet
               ? (
                 <>
@@ -445,7 +512,7 @@ export function RulesManagerDialog ({ open, onClose }: RulesManagerDialogProps) 
                 )
               : 'Select a rule set above to upload.'}
           </div>
-          <div className='flex gap-2'>
+          <div className='flex gap-2 flex-shrink-0'>
             <Button
               variant='outline'
               onClick={onClose}
@@ -453,6 +520,18 @@ export function RulesManagerDialog ({ open, onClose }: RulesManagerDialogProps) 
             >
               Close
             </Button>
+            {activeSet?.restartAvailable && (
+              <Button
+                variant='outline'
+                onClick={handleRestart}
+                disabled={restarting}
+                title={activeSet.restartDescription || `Restart ${activeSet.name} in VM "${activeSet.restartVmName || ''}"`}
+                className='border-yellow-500/50 hover:bg-yellow-500/10 hover:border-yellow-400 text-yellow-300 gap-2'
+              >
+                {restarting ? <Loader2 className='w-4 h-4 animate-spin' /> : <RotateCw className='w-4 h-4' />}
+                Restart {activeSet.name}
+              </Button>
+            )}
             <Button
               onClick={onPickFile}
               disabled={uploading || !activeSet}

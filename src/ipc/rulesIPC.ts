@@ -171,6 +171,23 @@ export function setupRulesIPC (): void {
     }
   });
 
+  // Restart the rule-consuming service for this set in its guest VM.
+  ipcMain.handle('rules:restart', async (_event, setId: string) => {
+    try {
+      const config = await loadRulesConfig();
+      const url = `${config.rules.baseUrl}${config.rules.basePath}/${encodeURIComponent(setId)}/restart`;
+      const res = await rulesRequest(url, 'POST');
+      if (res.status >= 200 && res.status < 300) {
+        return { success: true, data: res.body };
+      }
+      // 502 means the API reached the guest agent but the command failed - the
+      // body contains the structured RestartResult with stdout/stderr/exit.
+      return { success: false, status: res.status, data: res.body, error: extractError(res.body) };
+    } catch (error) {
+      return { success: false, error: error instanceof Error ? error.message : String(error) };
+    }
+  });
+
   // Reload the rules config from disk.
   ipcMain.handle('rules:reload-config', async () => {
     rulesConfig = null;
