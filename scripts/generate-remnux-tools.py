@@ -12,7 +12,11 @@ categories is collapsed into a single entry whose tags accumulate.
 Usage:
     pip install requests beautifulsoup4 PyYAML
 
-    # Print to stdout for inspection:
+    # Verify discovery by listing every URL the script would scrape
+    # (use this first if you suspect the URLs are wrong):
+    python scripts/generate-remnux-tools.py --list-urls
+
+    # Print YAML to stdout for inspection:
     python scripts/generate-remnux-tools.py
 
     # Write to a fresh file:
@@ -22,8 +26,7 @@ Usage:
     python scripts/generate-remnux-tools.py \\
         --merge config/tools.yaml --output config/tools.yaml
 
-    # Skip the sitemap and use a manual URL list (one per line, anything
-    # ending in '/discover-the-tools/<slug>'):
+    # Skip discovery and use your own URL list (one URL per line, '#' = comment):
     python scripts/generate-remnux-tools.py --urls-file my-urls.txt
 
 Python 3.6+. Uses only typing.* generics so it doesn't depend on PEP 585
@@ -31,7 +34,8 @@ Python 3.6+. Uses only typing.* generics so it doesn't depend on PEP 585
 
 Known limitations:
   * REMnux's mkdocs structure occasionally changes. If parsing yields too
-    few results, inspect parse_category() and adjust the heading filters.
+    few results, run with --list-urls to confirm discovery is finding the
+    right pages, then inspect parse_category() to tweak the heading filter.
   * Every tool defaults to a CLI launch (type: terminal, requiresSudo:
     false). Hand-tune GUI tools (ghidra, cutter, ...) after merging.
   * REMnux's docs list a description per tool but rarely a canonical command
@@ -65,21 +69,29 @@ DOCS_ROOT = "https://docs.remnux.org"
 SITEMAP_URL = DOCS_ROOT + "/sitemap.xml"
 INDEX_URL = DOCS_ROOT + "/discover-the-tools/"
 
+# Browsers / Cloudflare are picky about UAs. Use something Mozilla-ish so the
+# sitemap and index aren't rejected with 403.
+USER_AGENT = (
+    "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 "
+    "(KHTML, like Gecko) libvirt-ui-tools-gen/1.0 Safari/537.36"
+)
+
 # Map the top-level slug under /discover-the-tools/<slug>/... to a libvirt-ui
 # category that already exists in config/tools.yaml plus an extra tag that
 # keeps the REMnux grouping visible in the UI. Slugs not listed here are
-# still scraped but assigned to "reverse-engineering" with a "remnux" tag.
+# still scraped but assigned to "reverse-engineering" with a "remnux" tag --
+# so a one-off REMnux reorg won't drop tools on the floor.
 CATEGORY_MAP = {
-    "examine-static-properties":        ("reverse-engineering", "static-properties"),
-    "statically-analyze-code":          ("reverse-engineering", "static-analysis"),
+    "examine-static-properties":         ("reverse-engineering", "static-properties"),
+    "statically-analyze-code":           ("reverse-engineering", "static-analysis"),
     "dynamically-reverse-engineer-code": ("reverse-engineering", "dynamic-analysis"),
-    "perform-memory-forensics":         ("forensics",           "memory"),
-    "explore-network-interactions":     ("forensics",           "network"),
-    "investigate-system-interactions":  ("forensics",           "system"),
-    "analyze-documents":                ("forensics",           "documents"),
-    "analyze-email-messages":           ("forensics",           "email"),
-    "handle-data-and-code":             ("reverse-engineering", "data-handling"),
-    "gather-and-analyze-data":          ("recon",               "threat-intel"),
+    "perform-memory-forensics":          ("forensics",           "memory"),
+    "explore-network-interactions":      ("forensics",           "network"),
+    "investigate-system-interactions":   ("forensics",           "system"),
+    "analyze-documents":                 ("forensics",           "documents"),
+    "analyze-email-messages":            ("forensics",           "email"),
+    "handle-data-and-code":              ("reverse-engineering", "data-handling"),
+    "gather-and-analyze-data":           ("recon",               "threat-intel"),
 }  # type: Dict[str, Tuple[str, str]]
 
 # Headings that look like tool names but aren't. Intentionally conservative.
@@ -172,8 +184,7 @@ def looks_like_tool_heading(text):
 
 def fetch(url):
     # type: (str) -> str
-    print("  fetching {}".format(url), file=sys.stderr)
-    r = requests.get(url, timeout=30, headers={"User-Agent": "libvirt-ui-tools-gen/1.0"})
+    r = requests.get(url, timeout=30, headers={"User-Agent": USER_AGENT})
     r.raise_for_status()
     return r.text
 
@@ -189,7 +200,6 @@ def category_slug_for(url):
     if not m:
         return None
     slug = m.group(1)
-    # The bare index page has no slug; treat it as not a category page.
     if not slug or slug in {"", "index.html"}:
         return None
     return slug
@@ -197,7 +207,7 @@ def category_slug_for(url):
 
 def discover_urls_via_sitemap():
     # type: () -> List[str]
-    """Pull every /discover-the-tools/* URL from the mkdocs sitemap."""
+    print("  trying sitemap: {}".format(SITEMAP_URL), file=sys.stderr)
     try:
         xml_text = fetch(SITEMAP_URL)
     except requests.RequestException as e:
@@ -209,13 +219,12 @@ def discover_urls_via_sitemap():
         print("  ! sitemap parse failed: {}".format(e), file=sys.stderr)
         return []
 
-    # sitemap.xml uses the sitemaps.org namespace; handle with a wildcard so we
-    # don't have to hardcode the namespace URI.
-    locs = [el.text.strip() for el in root.iter() if el.tag.endswith("}loc") or el.tag == "loc"]
+    # sitemap.xml uses the sitemaps.org namespace; tolerate either namespaced
+    # or bare 'loc' tags so we don't have to hardcode the namespace URI.
+    locs = [el.text.strip() for el in root.iter()
+            if (el.tag.endswith("}loc") or el.tag == "loc") and el.text]
     urls = []
     for u in locs:
-        if not u:
-            continue
         if "/discover-the-tools/" in u and category_slug_for(u) is not None:
             urls.append(u)
     return urls
@@ -223,7 +232,7 @@ def discover_urls_via_sitemap():
 
 def discover_urls_via_index():
     # type: () -> List[str]
-    """Fallback: parse the 'Discover the Tools' index page for in-section links."""
+    print("  trying index page: {}".format(INDEX_URL), file=sys.stderr)
     try:
         html = fetch(INDEX_URL)
     except requests.RequestException as e:
@@ -231,9 +240,15 @@ def discover_urls_via_index():
         return []
     soup = BeautifulSoup(html, "html.parser")
     urls = set()
+    # mkdocs-material renders the section nav inside <nav> and inline links
+    # inside <article>; scoop links from either.
     for a in soup.find_all("a", href=True):
-        full = urljoin(INDEX_URL, a["href"]).split("#", 1)[0].rstrip("/") + "/"
+        href = a["href"]
+        full = urljoin(INDEX_URL, href).split("#", 1)[0]
         if "/discover-the-tools/" in full and category_slug_for(full) is not None:
+            # Normalise trailing slash so the dedup set works.
+            if not full.endswith("/"):
+                full += "/"
             urls.add(full)
     return sorted(urls)
 
@@ -244,7 +259,7 @@ def discover_urls():
     if urls:
         print("  sitemap returned {} candidate URLs".format(len(urls)), file=sys.stderr)
         return urls
-    print("  falling back to crawling the index page", file=sys.stderr)
+    print("  no URLs from sitemap, falling back to crawling the index page", file=sys.stderr)
     urls = discover_urls_via_index()
     print("  index crawl returned {} candidate URLs".format(len(urls)), file=sys.stderr)
     return urls
@@ -298,6 +313,8 @@ def scrape_all(urls):
     # type: (List[str]) -> List[Tool]
     collected = OrderedDict()  # type: Dict[str, Tool]
     unknown_slugs = set()  # type: set
+    fetched = 0
+    failed = 0
 
     for url in urls:
         slug = category_slug_for(url)
@@ -309,17 +326,26 @@ def scrape_all(urls):
 
         try:
             html = fetch(url)
+            fetched += 1
         except requests.RequestException as e:
+            failed += 1
             print("  ! skipping {}: {}".format(url, e), file=sys.stderr)
             continue
 
+        before = len(collected)
         for tool in parse_category(html, ui_cat, tag):
             existing = collected.get(tool.id)
             if existing is None:
                 collected[tool.id] = tool
             else:
                 existing.tags = sorted(set(existing.tags + tool.tags))
+        added = len(collected) - before
+        print("  + {} ({} new tools, slug={})".format(url, added, slug), file=sys.stderr)
 
+    print(
+        "  fetched {} / {} URLs ({} failed)".format(fetched, len(urls), failed),
+        file=sys.stderr,
+    )
     if unknown_slugs:
         print(
             "  note: tagged with default category for unknown REMnux slugs: {}"
@@ -387,6 +413,13 @@ def main():
         metavar="PATH",
         help="Use the URL list from this file instead of discovering them.",
     )
+    ap.add_argument(
+        "--list-urls",
+        action="store_true",
+        help="Print the discovered URLs (one per line) to stdout and exit, "
+             "without fetching the pages or producing YAML. Useful for "
+             "verifying that discovery is finding the right REMnux pages.",
+    )
     args = ap.parse_args()
 
     print("Discovering REMnux category URLs...", file=sys.stderr)
@@ -397,7 +430,15 @@ def main():
         urls = discover_urls()
 
     if not urls:
-        sys.exit("No URLs discovered. Use --urls-file with a manual list to override.")
+        sys.exit(
+            "No URLs discovered. Either docs.remnux.org is unreachable from "
+            "this host, or its layout changed. Try --urls-file with a manual list."
+        )
+
+    if args.list_urls:
+        for u in urls:
+            sys.stdout.write(u + "\n")
+        return
 
     tools = scrape_all(urls)
     print("Collected {} unique tools.".format(len(tools)), file=sys.stderr)
