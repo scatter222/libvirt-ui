@@ -21,6 +21,9 @@ Usage:
     python scripts/generate-remnux-tools.py \\
         --merge config/tools.yaml --output config/tools.yaml
 
+Python 3.6+. Uses only typing.* generics so it doesn't depend on PEP 585
+(list[...], dict[...]) which is 3.9+ only.
+
 Known limitations:
   * REMnux's mkdocs structure occasionally changes. If parsing yields too
     few results, inspect parse_category() and adjust the heading filters.
@@ -32,14 +35,12 @@ Known limitations:
     heading, or `<command> --help` as a placeholder.
 """
 
-from __future__ import annotations
-
 import argparse
 import re
 import sys
 from collections import OrderedDict
 from dataclasses import dataclass, field
-from typing import Iterable
+from typing import Dict, Iterable, List, Optional, Tuple
 from urllib.parse import urljoin
 
 try:
@@ -48,8 +49,10 @@ try:
     from bs4 import BeautifulSoup
 except ImportError as exc:  # pragma: no cover
     sys.exit(
-        f"Missing dependency: {exc.name}. "
-        "Install with: pip install requests beautifulsoup4 PyYAML"
+        "Missing dependency: {}. "
+        "Install with: pip install requests beautifulsoup4 PyYAML".format(
+            getattr(exc, "name", exc)
+        )
     )
 
 
@@ -58,7 +61,7 @@ REMNUX_BASE = "https://docs.remnux.org/discover-the-tools/"
 # REMnux 'Discover the Tools' pages, mapped to libvirt-ui categories already
 # present in config/tools.yaml. Add a REMnux-specific tag so the original
 # grouping survives the mapping and is filterable from the UI.
-REMNUX_CATEGORIES: list[tuple[str, str, str]] = [
+REMNUX_CATEGORIES = [
     # (REMnux URL path, libvirt-ui category, REMnux-tag)
     ("examine-static-properties/general",                     "reverse-engineering", "static-properties"),
     ("examine-static-properties/specific-formats",            "reverse-engineering", "static-properties"),
@@ -74,7 +77,7 @@ REMNUX_CATEGORIES: list[tuple[str, str, str]] = [
     ("analyze-email-messages",                                "forensics",           "email"),
     ("handle-data-and-code",                                  "reverse-engineering", "data-handling"),
     ("gather-and-analyze-data",                               "recon",               "threat-intel"),
-]
+]  # type: List[Tuple[str, str, str]]
 
 # Headings that look like tool names but aren't. The list is intentionally
 # conservative -- false positives are easier to spot in review than missing
@@ -102,12 +105,12 @@ class Tool:
     display_name: str
     description: str
     category: str
-    tags: list[str] = field(default_factory=list)
+    tags: List[str] = field(default_factory=list)
     command: str = ""
     quick_start: str = ""
     require_sudo: bool = False
 
-    def to_yaml_dict(self) -> dict:
+    def to_yaml_dict(self):
         return {
             "id": self.id,
             "name": self.name,
@@ -121,25 +124,28 @@ class Tool:
                 "requiresSudo": self.require_sudo,
             },
             "documentation": {
-                "quickStart": self.quick_start or f"{self.command} --help",
+                "quickStart": self.quick_start or "{} --help".format(self.command),
                 "examples": [
-                    {"description": "Show help", "command": f"{self.command} --help"}
+                    {"description": "Show help", "command": "{} --help".format(self.command)}
                 ],
             },
         }
 
 
-def slugify(name: str) -> str:
+def slugify(name):
+    # type: (str) -> str
     s = name.lower().strip()
     s = re.sub(r"[^\w\s-]", "", s)
     s = re.sub(r"[\s_-]+", "-", s)
     return s.strip("-")
 
 
-def extract_command(name: str, first_code_line: str | None) -> str:
+def extract_command(name, first_code_line):
+    # type: (str, Optional[str]) -> str
     # Prefer the literal command shown in a code sample if it looks sane.
     if first_code_line:
-        token = first_code_line.strip().split()[0] if first_code_line.strip() else ""
+        stripped = first_code_line.strip()
+        token = stripped.split()[0] if stripped else ""
         if COMMAND_RE.match(token):
             return token
     # Fall back to a slug of the first whitespace-delimited word of the name.
@@ -148,7 +154,8 @@ def extract_command(name: str, first_code_line: str | None) -> str:
     return cmd or slugify(name)
 
 
-def looks_like_tool_heading(text: str) -> bool:
+def looks_like_tool_heading(text):
+    # type: (str) -> bool
     cleaned = text.strip().lower()
     if not cleaned or len(cleaned) > 80:
         return False
@@ -161,14 +168,16 @@ def looks_like_tool_heading(text: str) -> bool:
     return True
 
 
-def fetch(url: str) -> str:
-    print(f"  fetching {url}", file=sys.stderr)
+def fetch(url):
+    # type: (str) -> str
+    print("  fetching {}".format(url), file=sys.stderr)
     r = requests.get(url, timeout=30, headers={"User-Agent": "libvirt-ui-tools-gen/1.0"})
     r.raise_for_status()
     return r.text
 
 
-def parse_category(html: str, ui_category: str, remnux_tag: str) -> Iterable[Tool]:
+def parse_category(html, ui_category, remnux_tag):
+    # type: (str, str, str) -> Iterable[Tool]
     soup = BeautifulSoup(html, "html.parser")
     article = soup.find("article") or soup
 
@@ -177,8 +186,8 @@ def parse_category(html: str, ui_category: str, remnux_tag: str) -> Iterable[Too
         if not looks_like_tool_heading(name):
             continue
 
-        description_parts: list[str] = []
-        first_code: str | None = None
+        description_parts = []  # type: List[str]
+        first_code = None       # type: Optional[str]
         for sib in header.find_next_siblings():
             if sib.name in {"h1", "h2", "h3"}:
                 break
@@ -205,18 +214,19 @@ def parse_category(html: str, ui_category: str, remnux_tag: str) -> Iterable[Too
             category=ui_category,
             tags=["malware-analysis", remnux_tag, "remnux"],
             command=command,
-            quick_start=first_code or f"{command} --help",
+            quick_start=first_code or "{} --help".format(command),
         )
 
 
-def scrape_all() -> list[Tool]:
-    collected: OrderedDict[str, Tool] = OrderedDict()
+def scrape_all():
+    # type: () -> List[Tool]
+    collected = OrderedDict()  # type: Dict[str, Tool]
     for path, ui_cat, tag in REMNUX_CATEGORIES:
         url = urljoin(REMNUX_BASE, path)
         try:
             html = fetch(url)
         except requests.RequestException as e:
-            print(f"  ! skipping {url}: {e}", file=sys.stderr)
+            print("  ! skipping {}: {}".format(url, e), file=sys.stderr)
             continue
 
         for tool in parse_category(html, ui_cat, tag):
@@ -230,7 +240,8 @@ def scrape_all() -> list[Tool]:
     return list(collected.values())
 
 
-def merge_into_tools_yaml(existing_path: str, new_tools: list[Tool], output_path: str) -> None:
+def merge_into_tools_yaml(existing_path, new_tools, output_path):
+    # type: (str, List[Tool], str) -> None
     with open(existing_path, "r", encoding="utf-8") as f:
         doc = yaml.safe_load(f) or {}
     doc.setdefault("tools", [])
@@ -251,10 +262,10 @@ def merge_into_tools_yaml(existing_path: str, new_tools: list[Tool], output_path
         )
         yaml.dump(doc, f, sort_keys=False, default_flow_style=False, width=120, allow_unicode=True)
 
-    print(f"Added {added} new tools to {output_path}", file=sys.stderr)
+    print("Added {} new tools to {}".format(added, output_path), file=sys.stderr)
 
 
-def main() -> None:
+def main():
     ap = argparse.ArgumentParser(
         description=__doc__,
         formatter_class=argparse.RawDescriptionHelpFormatter,
@@ -273,7 +284,7 @@ def main() -> None:
 
     print("Scraping REMnux 'Discover the Tools' pages...", file=sys.stderr)
     tools = scrape_all()
-    print(f"Collected {len(tools)} unique tools.", file=sys.stderr)
+    print("Collected {} unique tools.".format(len(tools)), file=sys.stderr)
 
     if args.merge:
         merge_into_tools_yaml(args.merge, tools, args.output or args.merge)
