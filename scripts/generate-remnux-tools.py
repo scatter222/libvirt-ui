@@ -2,11 +2,12 @@
 """
 Generate libvirt-ui tools.yaml entries from REMnux's online documentation.
 
-Scrapes the category pages under https://docs.remnux.org/discover-the-tools/
-and emits YAML entries that match the schema used by config/tools.yaml.
-The same tool appearing in multiple REMnux categories is collapsed into a
-single entry whose tags accumulate so it's still discoverable from each
-category's perspective.
+Discovers REMnux 'Discover the Tools' category pages dynamically (via
+sitemap.xml, falling back to crawling the index page) so the script
+doesn't break when REMnux reorganises URLs. Each page is parsed for
+tool headings and emitted as a YAML entry matching the schema used by
+config/tools.yaml. The same tool appearing in multiple REMnux
+categories is collapsed into a single entry whose tags accumulate.
 
 Usage:
     pip install requests beautifulsoup4 PyYAML
@@ -21,15 +22,18 @@ Usage:
     python scripts/generate-remnux-tools.py \\
         --merge config/tools.yaml --output config/tools.yaml
 
+    # Skip the sitemap and use a manual URL list (one per line, anything
+    # ending in '/discover-the-tools/<slug>'):
+    python scripts/generate-remnux-tools.py --urls-file my-urls.txt
+
 Python 3.6+. Uses only typing.* generics so it doesn't depend on PEP 585
 (list[...], dict[...]) which is 3.9+ only.
 
 Known limitations:
   * REMnux's mkdocs structure occasionally changes. If parsing yields too
     few results, inspect parse_category() and adjust the heading filters.
-  * The script defaults every tool to a CLI launch (type: terminal,
-    requiresSudo: false). Hand-tune GUI tools (ghidra, cutter, ...) after
-    merging.
+  * Every tool defaults to a CLI launch (type: terminal, requiresSudo:
+    false). Hand-tune GUI tools (ghidra, cutter, ...) after merging.
   * REMnux's docs list a description per tool but rarely a canonical command
     line. quickStart is best-effort -- the first code block under the
     heading, or `<command> --help` as a placeholder.
@@ -38,10 +42,11 @@ Known limitations:
 import argparse
 import re
 import sys
+import xml.etree.ElementTree as ET
 from collections import OrderedDict
 from dataclasses import dataclass, field
 from typing import Dict, Iterable, List, Optional, Tuple
-from urllib.parse import urljoin
+from urllib.parse import urljoin, urlparse
 
 try:
     import requests
@@ -56,32 +61,28 @@ except ImportError as exc:  # pragma: no cover
     )
 
 
-REMNUX_BASE = "https://docs.remnux.org/discover-the-tools/"
+DOCS_ROOT = "https://docs.remnux.org"
+SITEMAP_URL = DOCS_ROOT + "/sitemap.xml"
+INDEX_URL = DOCS_ROOT + "/discover-the-tools/"
 
-# REMnux 'Discover the Tools' pages, mapped to libvirt-ui categories already
-# present in config/tools.yaml. Add a REMnux-specific tag so the original
-# grouping survives the mapping and is filterable from the UI.
-REMNUX_CATEGORIES = [
-    # (REMnux URL path, libvirt-ui category, REMnux-tag)
-    ("examine-static-properties/general",                     "reverse-engineering", "static-properties"),
-    ("examine-static-properties/specific-formats",            "reverse-engineering", "static-properties"),
-    ("statically-analyze-code/general",                       "reverse-engineering", "static-analysis"),
-    ("statically-analyze-code/disassemblers-and-debuggers",   "reverse-engineering", "disassembler"),
-    ("statically-analyze-code/specific-formats",              "reverse-engineering", "static-analysis"),
-    ("dynamically-reverse-engineer-code/general",             "reverse-engineering", "dynamic-analysis"),
-    ("dynamically-reverse-engineer-code/specific-formats",    "reverse-engineering", "dynamic-analysis"),
-    ("perform-memory-forensics",                              "forensics",           "memory"),
-    ("explore-network-interactions",                          "forensics",           "network"),
-    ("investigate-system-interactions",                       "forensics",           "system"),
-    ("analyze-documents",                                     "forensics",           "documents"),
-    ("analyze-email-messages",                                "forensics",           "email"),
-    ("handle-data-and-code",                                  "reverse-engineering", "data-handling"),
-    ("gather-and-analyze-data",                               "recon",               "threat-intel"),
-]  # type: List[Tuple[str, str, str]]
+# Map the top-level slug under /discover-the-tools/<slug>/... to a libvirt-ui
+# category that already exists in config/tools.yaml plus an extra tag that
+# keeps the REMnux grouping visible in the UI. Slugs not listed here are
+# still scraped but assigned to "reverse-engineering" with a "remnux" tag.
+CATEGORY_MAP = {
+    "examine-static-properties":        ("reverse-engineering", "static-properties"),
+    "statically-analyze-code":          ("reverse-engineering", "static-analysis"),
+    "dynamically-reverse-engineer-code": ("reverse-engineering", "dynamic-analysis"),
+    "perform-memory-forensics":         ("forensics",           "memory"),
+    "explore-network-interactions":     ("forensics",           "network"),
+    "investigate-system-interactions":  ("forensics",           "system"),
+    "analyze-documents":                ("forensics",           "documents"),
+    "analyze-email-messages":           ("forensics",           "email"),
+    "handle-data-and-code":             ("reverse-engineering", "data-handling"),
+    "gather-and-analyze-data":          ("recon",               "threat-intel"),
+}  # type: Dict[str, Tuple[str, str]]
 
-# Headings that look like tool names but aren't. The list is intentionally
-# conservative -- false positives are easier to spot in review than missing
-# entries.
+# Headings that look like tool names but aren't. Intentionally conservative.
 NON_TOOL_HEADINGS = {
     "general",
     "introduction",
@@ -93,6 +94,9 @@ NON_TOOL_HEADINGS = {
     "disassemblers and debuggers",
     "references",
     "prerequisites",
+    "contents",
+    "tools",
+    "categories",
 }
 
 COMMAND_RE = re.compile(r"^[a-z0-9][a-z0-9._+\-]*$")
@@ -142,13 +146,11 @@ def slugify(name):
 
 def extract_command(name, first_code_line):
     # type: (str, Optional[str]) -> str
-    # Prefer the literal command shown in a code sample if it looks sane.
     if first_code_line:
         stripped = first_code_line.strip()
         token = stripped.split()[0] if stripped else ""
         if COMMAND_RE.match(token):
             return token
-    # Fall back to a slug of the first whitespace-delimited word of the name.
     first = name.strip().split()[0]
     cmd = re.sub(r"[^a-z0-9._+\-]", "", first.lower())
     return cmd or slugify(name)
@@ -175,6 +177,80 @@ def fetch(url):
     r.raise_for_status()
     return r.text
 
+
+# ---- URL discovery -----------------------------------------------------------
+
+def category_slug_for(url):
+    # type: (str) -> Optional[str]
+    """Return the top-level slug under /discover-the-tools/, or None if the URL
+    is the index itself or unrelated."""
+    path = urlparse(url).path
+    m = re.search(r"/discover-the-tools/([^/]+)", path)
+    if not m:
+        return None
+    slug = m.group(1)
+    # The bare index page has no slug; treat it as not a category page.
+    if not slug or slug in {"", "index.html"}:
+        return None
+    return slug
+
+
+def discover_urls_via_sitemap():
+    # type: () -> List[str]
+    """Pull every /discover-the-tools/* URL from the mkdocs sitemap."""
+    try:
+        xml_text = fetch(SITEMAP_URL)
+    except requests.RequestException as e:
+        print("  ! sitemap fetch failed: {}".format(e), file=sys.stderr)
+        return []
+    try:
+        root = ET.fromstring(xml_text)
+    except ET.ParseError as e:
+        print("  ! sitemap parse failed: {}".format(e), file=sys.stderr)
+        return []
+
+    # sitemap.xml uses the sitemaps.org namespace; handle with a wildcard so we
+    # don't have to hardcode the namespace URI.
+    locs = [el.text.strip() for el in root.iter() if el.tag.endswith("}loc") or el.tag == "loc"]
+    urls = []
+    for u in locs:
+        if not u:
+            continue
+        if "/discover-the-tools/" in u and category_slug_for(u) is not None:
+            urls.append(u)
+    return urls
+
+
+def discover_urls_via_index():
+    # type: () -> List[str]
+    """Fallback: parse the 'Discover the Tools' index page for in-section links."""
+    try:
+        html = fetch(INDEX_URL)
+    except requests.RequestException as e:
+        print("  ! index fetch failed: {}".format(e), file=sys.stderr)
+        return []
+    soup = BeautifulSoup(html, "html.parser")
+    urls = set()
+    for a in soup.find_all("a", href=True):
+        full = urljoin(INDEX_URL, a["href"]).split("#", 1)[0].rstrip("/") + "/"
+        if "/discover-the-tools/" in full and category_slug_for(full) is not None:
+            urls.add(full)
+    return sorted(urls)
+
+
+def discover_urls():
+    # type: () -> List[str]
+    urls = discover_urls_via_sitemap()
+    if urls:
+        print("  sitemap returned {} candidate URLs".format(len(urls)), file=sys.stderr)
+        return urls
+    print("  falling back to crawling the index page", file=sys.stderr)
+    urls = discover_urls_via_index()
+    print("  index crawl returned {} candidate URLs".format(len(urls)), file=sys.stderr)
+    return urls
+
+
+# ---- parsing -----------------------------------------------------------------
 
 def parse_category(html, ui_category, remnux_tag):
     # type: (str, str, str) -> Iterable[Tool]
@@ -218,11 +294,19 @@ def parse_category(html, ui_category, remnux_tag):
         )
 
 
-def scrape_all():
-    # type: () -> List[Tool]
+def scrape_all(urls):
+    # type: (List[str]) -> List[Tool]
     collected = OrderedDict()  # type: Dict[str, Tool]
-    for path, ui_cat, tag in REMNUX_CATEGORIES:
-        url = urljoin(REMNUX_BASE, path)
+    unknown_slugs = set()  # type: set
+
+    for url in urls:
+        slug = category_slug_for(url)
+        if slug is None:
+            continue
+        ui_cat, tag = CATEGORY_MAP.get(slug, ("reverse-engineering", "remnux"))
+        if slug not in CATEGORY_MAP:
+            unknown_slugs.add(slug)
+
         try:
             html = fetch(url)
         except requests.RequestException as e:
@@ -234,11 +318,18 @@ def scrape_all():
             if existing is None:
                 collected[tool.id] = tool
             else:
-                # Same tool seen in another category: accumulate tags so the
-                # entry remains discoverable from each REMnux grouping.
                 existing.tags = sorted(set(existing.tags + tool.tags))
+
+    if unknown_slugs:
+        print(
+            "  note: tagged with default category for unknown REMnux slugs: {}"
+            .format(", ".join(sorted(unknown_slugs))),
+            file=sys.stderr,
+        )
     return list(collected.values())
 
+
+# ---- output ------------------------------------------------------------------
 
 def merge_into_tools_yaml(existing_path, new_tools, output_path):
     # type: (str, List[Tool], str) -> None
@@ -265,6 +356,17 @@ def merge_into_tools_yaml(existing_path, new_tools, output_path):
     print("Added {} new tools to {}".format(added, output_path), file=sys.stderr)
 
 
+def read_urls_file(path):
+    # type: (str) -> List[str]
+    out = []
+    with open(path, "r", encoding="utf-8") as f:
+        for line in f:
+            u = line.strip()
+            if u and not u.startswith("#"):
+                out.append(u)
+    return out
+
+
 def main():
     ap = argparse.ArgumentParser(
         description=__doc__,
@@ -280,10 +382,24 @@ def main():
         metavar="OUT",
         help="Output file (default: stdout, or the --merge target if both omitted).",
     )
+    ap.add_argument(
+        "--urls-file",
+        metavar="PATH",
+        help="Use the URL list from this file instead of discovering them.",
+    )
     args = ap.parse_args()
 
-    print("Scraping REMnux 'Discover the Tools' pages...", file=sys.stderr)
-    tools = scrape_all()
+    print("Discovering REMnux category URLs...", file=sys.stderr)
+    if args.urls_file:
+        urls = read_urls_file(args.urls_file)
+        print("  loaded {} URLs from {}".format(len(urls), args.urls_file), file=sys.stderr)
+    else:
+        urls = discover_urls()
+
+    if not urls:
+        sys.exit("No URLs discovered. Use --urls-file with a manual list to override.")
+
+    tools = scrape_all(urls)
     print("Collected {} unique tools.".format(len(tools)), file=sys.stderr)
 
     if args.merge:
