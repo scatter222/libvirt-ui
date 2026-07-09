@@ -1,7 +1,7 @@
 import { ToolCard } from '@/app/components/tool-card';
 import { Button } from '@/app/components/ui/button';
 
-import { RefreshCw, Search, Filter, Terminal } from 'lucide-react';
+import { RefreshCw, Search, Terminal, Server } from 'lucide-react';
 import { useEffect, useState } from 'react';
 
 interface Tool {
@@ -9,13 +9,12 @@ interface Tool {
   name: string;
   displayName: string;
   description: string;
+  system: string;
   category: string;
+  interface: 'cli' | 'gui';
+  isDefault?: boolean;
+  requiresSudo?: boolean;
   tags: string[];
-  launch: {
-    type: 'terminal' | 'gui';
-    command: string;
-    requiresSudo: boolean;
-  };
   documentation: {
     quickStart: string;
     examples: Array<{
@@ -25,18 +24,33 @@ interface Tool {
   };
 }
 
+interface System {
+  id: string;
+  name: string;
+  os: string;
+  color: string;
+  icon: string;
+  description: string;
+}
+
 export function ToolsDashboard () {
   const [tools, setTools] = useState<Tool[]>([]);
+  const [systems, setSystems] = useState<System[]>([]);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
   const [selectedCategory, _setSelectedCategory] = useState<string>('all');
+  const [selectedSystem, setSelectedSystem] = useState<string>('all');
 
   const loadTools = async () => {
     try {
       setRefreshing(true);
-      const toolsList = await electron.ipcRenderer.invoke('tools:list');
+      const [toolsList, systemsList] = await Promise.all([
+        electron.ipcRenderer.invoke('tools:list'),
+        electron.ipcRenderer.invoke('tools:systems')
+      ]);
       setTools(toolsList);
+      setSystems(systemsList);
     } catch (error) {
       console.error('Failed to load tools:', error);
     } finally {
@@ -49,29 +63,9 @@ export function ToolsDashboard () {
     loadTools();
   }, []);
 
-  const handleLaunch = async (toolId: string) => {
-    try {
-      await electron.ipcRenderer.invoke('tools:launch', toolId);
-    } catch (error) {
-      console.error('Failed to launch tool:', error);
-      // You might want to show a toast notification here
-    }
-  };
+  const systemsById = new Map(systems.map((s) => [s.id, s]));
 
-  const handleViewDocs = async (toolId: string) => {
-    try {
-      const tool = tools.find((t) => t.id === toolId);
-      if (tool) {
-        // Open external documentation if available
-        // For now, we'll just log it
-        console.log('View docs for:', tool.name);
-      }
-    } catch (error) {
-      console.error('Failed to open documentation:', error);
-    }
-  };
-
-  // Filter tools based on search and category
+  // Filter tools based on search, category and system
   const filteredTools = tools.filter((tool) => {
     const matchesSearch = searchQuery === '' ||
       tool.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
@@ -80,8 +74,9 @@ export function ToolsDashboard () {
       tool.tags.some((tag) => tag.toLowerCase().includes(searchQuery.toLowerCase()));
 
     const matchesCategory = selectedCategory === 'all' || tool.category === selectedCategory;
+    const matchesSystem = selectedSystem === 'all' || tool.system === selectedSystem;
 
-    return matchesSearch && matchesCategory;
+    return matchesSearch && matchesCategory && matchesSystem;
   });
 
   if (loading) {
@@ -117,7 +112,7 @@ export function ToolsDashboard () {
                   Security Tools Arsenal
                 </h1>
                 <p className='text-sm text-text-light/70 mt-2'>
-                  {tools.length} tools available for security operations
+                  {tools.length} tools across {systems.length} systems — explore what's available in the lab
                 </p>
               </div>
               <Button
@@ -132,25 +127,51 @@ export function ToolsDashboard () {
               </Button>
             </div>
 
-            {/* Search and Filter Bar */}
-            <div className='flex gap-4'>
-              <div className='flex-1 relative'>
-                <Search className='absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-text-light/40' />
-                <input
-                  type='text'
-                  placeholder='Search tools by name, description, or tags...'
-                  value={searchQuery}
-                  onChange={(e) => setSearchQuery(e.target.value)}
-                  className='w-full pl-10 pr-4 py-2.5 bg-dark-300/50 border border-border-light/20 rounded-lg text-sm text-white placeholder:text-text-light/40 focus:outline-none focus:ring-2 focus:ring-primary/30 focus:border-primary/50 transition-all'
-                />
-              </div>
-              <Button
-                variant='outline'
-                className='gap-2 border-border-light/50 hover:bg-dark-300/50 hover:border-primary/50'
+            {/* Search Bar */}
+            <div className='relative mb-4'>
+              <Search className='absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-text-light/40' />
+              <input
+                type='text'
+                placeholder='Search tools by name, description, or tags...'
+                value={searchQuery}
+                onChange={(e) => setSearchQuery(e.target.value)}
+                className='w-full pl-10 pr-4 py-2.5 bg-dark-300/50 border border-border-light/20 rounded-lg text-sm text-white placeholder:text-text-light/40 focus:outline-none focus:ring-2 focus:ring-primary/30 focus:border-primary/50 transition-all'
+              />
+            </div>
+
+            {/* System filter chips */}
+            <div className='flex flex-wrap items-center gap-2'>
+              <span className='flex items-center gap-1.5 text-xs text-text-light/50 mr-1'>
+                <Server className='w-3.5 h-3.5' /> System:
+              </span>
+              <button
+                onClick={() => setSelectedSystem('all')}
+                className={`px-3 py-1.5 rounded-lg text-xs font-medium transition-all border ${
+                  selectedSystem === 'all'
+                    ? 'bg-primary/20 text-primary border-primary/50'
+                    : 'bg-dark-300/50 text-text-light/70 border-border-light/20 hover:border-primary/40'
+                }`}
               >
-                <Filter className='w-4 h-4' />
-                Filters
-              </Button>
+                All ({tools.length})
+              </button>
+              {systems.map((system) => {
+                const count = tools.filter((t) => t.system === system.id).length;
+                const isActive = selectedSystem === system.id;
+                return (
+                  <button
+                    key={system.id}
+                    onClick={() => setSelectedSystem(isActive ? 'all' : system.id)}
+                    title={`${system.name} · ${system.os}`}
+                    className={`px-3 py-1.5 rounded-lg text-xs font-medium transition-all border ${
+                      isActive
+                        ? 'bg-primary/20 text-primary border-primary/50'
+                        : 'bg-dark-300/50 text-text-light/70 border-border-light/20 hover:border-primary/40'
+                    }`}
+                  >
+                    {system.name} ({count})
+                  </button>
+                );
+              })}
             </div>
           </div>
 
@@ -163,28 +184,34 @@ export function ToolsDashboard () {
                 <p className='text-sm text-text-light/60 text-center max-w-md'>
                   {searchQuery
                     ? `No tools match your search "${searchQuery}"`
-                    : 'No tools available in this category'}
+                    : 'No tools available for this filter'}
                 </p>
               </div>
               )
             : (
               <div className='grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-5 stagger-animation'>
-                {filteredTools.map((tool) => (
-                  <ToolCard
-                    key={tool.id}
-                    id={tool.id}
-                    name={tool.name}
-                    displayName={tool.displayName}
-                    description={tool.description}
-                    category={tool.category}
-                    tags={tool.tags}
-                    requiresSudo={tool.launch.requiresSudo}
-                    launchType={tool.launch.type}
-                    quickStart={tool.documentation.quickStart}
-                    onLaunch={handleLaunch}
-                    onViewDocs={handleViewDocs}
-                  />
-                ))}
+                {filteredTools.map((tool) => {
+                  const system = systemsById.get(tool.system);
+                  return (
+                    <ToolCard
+                      key={tool.id}
+                      id={tool.id}
+                      name={tool.name}
+                      displayName={tool.displayName}
+                      description={tool.description}
+                      category={tool.category}
+                      tags={tool.tags}
+                      requiresSudo={tool.requiresSudo}
+                      interface={tool.interface}
+                      isDefault={tool.isDefault}
+                      quickStart={tool.documentation.quickStart}
+                      systemId={tool.system}
+                      systemName={system?.name}
+                      systemOs={system?.os}
+                      systemColor={system?.color}
+                    />
+                  );
+                })}
               </div>
               )}
 

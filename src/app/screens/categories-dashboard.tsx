@@ -2,8 +2,10 @@ import { ToolCard } from '@/app/components/tool-card';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/app/components/ui/card';
 
 import {
-  Shield, Search, Zap, Key, Fingerprint, Code, Globe, Wifi,
-  Database, Network, AlertTriangle, Eye, Lock, Server
+  Shield, Search, Zap, Key, KeyRound, Code, Globe, Wifi,
+  Database, Network, AlertTriangle, Lock, Bug, Binary,
+  Cpu, HardDrive, Clock, FileText, FileSearch, Radar, Crosshair,
+  EyeOff, Wrench
 } from 'lucide-react';
 import { useEffect, useState } from 'react';
 
@@ -21,13 +23,12 @@ interface Tool {
   name: string;
   displayName: string;
   description: string;
+  system: string;
   category: string;
+  interface: 'cli' | 'gui';
+  isDefault?: boolean;
+  requiresSudo?: boolean;
   tags: string[];
-  launch: {
-    type: 'terminal' | 'gui';
-    command: string;
-    requiresSudo: boolean;
-  };
   documentation: {
     quickStart: string;
     examples: Array<{
@@ -37,36 +38,67 @@ interface Tool {
   };
 }
 
+interface System {
+  id: string;
+  name: string;
+  os: string;
+  color: string;
+  icon: string;
+  description: string;
+}
+
 const categoryIcons: Record<string, React.ComponentType<{ className?: string }>> = {
+  'static-analysis': FileSearch,
+  disassembly: Code,
+  debugging: Bug,
+  'reverse-engineering': Binary,
+  'memory-forensics': Cpu,
+  'disk-forensics': HardDrive,
+  'timeline-analysis': Clock,
+  'registry-analysis': Database,
+  'network-analysis': Network,
+  'document-analysis': FileText,
   recon: Search,
-  scanning: Network,
+  scanning: Radar,
+  'web-security': Globe,
   exploitation: Zap,
   'post-exploitation': Key,
-  forensics: Fingerprint,
-  'reverse-engineering': Code,
-  'web-security': Globe,
+  'password-attacks': KeyRound,
   wireless: Wifi,
-  database: Database,
-  vulnerability: Shield,
-  monitoring: Eye,
-  persistence: Lock,
-  'lateral-movement': Server
+  'threat-intel': Crosshair,
+  'privacy-anonymity': EyeOff,
+  cryptography: Lock,
+  utilities: Wrench
 };
 
 const categoryColors: Record<string, string> = {
+  'static-analysis': 'from-cyan-500 to-cyan-400',
+  disassembly: 'from-green-500 to-green-400',
+  debugging: 'from-red-500 to-red-400',
+  'reverse-engineering': 'from-emerald-500 to-emerald-400',
+  'memory-forensics': 'from-purple-500 to-purple-400',
+  'disk-forensics': 'from-cyan-500 to-cyan-400',
+  'timeline-analysis': 'from-teal-500 to-teal-400',
+  'registry-analysis': 'from-violet-500 to-violet-400',
+  'network-analysis': 'from-blue-500 to-blue-400',
+  'document-analysis': 'from-amber-500 to-amber-400',
   recon: 'from-blue-500 to-blue-400',
   scanning: 'from-purple-500 to-purple-400',
+  'web-security': 'from-indigo-500 to-indigo-400',
   exploitation: 'from-red-500 to-red-400',
   'post-exploitation': 'from-orange-500 to-orange-400',
-  forensics: 'from-cyan-500 to-cyan-400',
-  'reverse-engineering': 'from-green-500 to-green-400',
-  'web-security': 'from-indigo-500 to-indigo-400',
-  wireless: 'from-pink-500 to-pink-400'
+  'password-attacks': 'from-rose-500 to-rose-400',
+  wireless: 'from-pink-500 to-pink-400',
+  'threat-intel': 'from-yellow-500 to-yellow-400',
+  'privacy-anonymity': 'from-emerald-500 to-emerald-400',
+  cryptography: 'from-slate-500 to-slate-400',
+  utilities: 'from-slate-500 to-slate-400'
 };
 
 export function CategoriesDashboard () {
   const [categories, setCategories] = useState<Category[]>([]);
   const [tools, setTools] = useState<Tool[]>([]);
+  const [systems, setSystems] = useState<System[]>([]);
   const [selectedCategory, setSelectedCategory] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [searchQuery, setSearchQuery] = useState('');
@@ -77,9 +109,10 @@ export function CategoriesDashboard () {
 
   const loadCategoriesAndTools = async () => {
     try {
-      const [categoriesList, toolsList] = await Promise.all([
+      const [categoriesList, toolsList, systemsList] = await Promise.all([
         electron.ipcRenderer.invoke('tools:categories'),
-        electron.ipcRenderer.invoke('tools:list')
+        electron.ipcRenderer.invoke('tools:list'),
+        electron.ipcRenderer.invoke('tools:systems')
       ]);
 
       // Count tools per category
@@ -92,92 +125,18 @@ export function CategoriesDashboard () {
 
       setCategories(categoriesWithCounts);
       setTools(toolsList);
+      setSystems(systemsList);
     } catch (error) {
       console.error('Failed to load categories and tools:', error);
-      // Fallback to hardcoded categories
-      setCategories([
-        {
-          id: 'recon',
-          name: 'Reconnaissance',
-          icon: Search,
-          color: 'from-blue-500 to-blue-400',
-          description: 'Information gathering and enumeration tools',
-          toolCount: 2
-        },
-        {
-          id: 'scanning',
-          name: 'Scanning & Enumeration',
-          icon: Network,
-          color: 'from-purple-500 to-purple-400',
-          description: 'Network and service discovery tools',
-          toolCount: 1
-        },
-        {
-          id: 'exploitation',
-          name: 'Exploitation',
-          icon: Zap,
-          color: 'from-red-500 to-red-400',
-          description: 'Vulnerability exploitation frameworks and tools',
-          toolCount: 5
-        },
-        {
-          id: 'post-exploitation',
-          name: 'Post-Exploitation',
-          icon: Key,
-          color: 'from-orange-500 to-orange-400',
-          description: 'Persistence, privilege escalation, and lateral movement',
-          toolCount: 0
-        },
-        {
-          id: 'forensics',
-          name: 'Digital Forensics',
-          icon: Fingerprint,
-          color: 'from-cyan-500 to-cyan-400',
-          description: 'Evidence collection and analysis tools',
-          toolCount: 2
-        },
-        {
-          id: 'reverse-engineering',
-          name: 'Reverse Engineering',
-          icon: Code,
-          color: 'from-green-500 to-green-400',
-          description: 'Binary analysis and reverse engineering tools',
-          toolCount: 2
-        },
-        {
-          id: 'web-security',
-          name: 'Web Security',
-          icon: Globe,
-          color: 'from-indigo-500 to-indigo-400',
-          description: 'Web application security testing tools',
-          toolCount: 3
-        },
-        {
-          id: 'wireless',
-          name: 'Wireless Security',
-          icon: Wifi,
-          color: 'from-pink-500 to-pink-400',
-          description: 'Wireless network security tools',
-          toolCount: 1
-        }
-      ]);
+      setCategories([]);
       setTools([]);
+      setSystems([]);
     } finally {
       setLoading(false);
     }
   };
 
-  const handleLaunchTool = async (toolId: string) => {
-    try {
-      await electron.ipcRenderer.invoke('tools:launch', toolId);
-    } catch (error) {
-      console.error('Failed to launch tool:', error);
-    }
-  };
-
-  const handleViewDocs = async (toolId: string) => {
-    console.log('View docs for:', toolId);
-  };
+  const systemsById = new Map(systems.map((s) => [s.id, s]));
 
   // Filter tools based on selected category and search query
   const filteredTools = tools.filter((tool) => {
@@ -356,22 +315,28 @@ export function CategoriesDashboard () {
                   )
                 : (
                   <div className='grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-5 animate-fade-in'>
-                    {filteredTools.map((tool) => (
-                      <ToolCard
-                        key={tool.id}
-                        id={tool.id}
-                        name={tool.name}
-                        displayName={tool.displayName}
-                        description={tool.description}
-                        category={tool.category}
-                        tags={tool.tags}
-                        requiresSudo={tool.launch.requiresSudo}
-                        launchType={tool.launch.type}
-                        quickStart={tool.documentation.quickStart}
-                        onLaunch={handleLaunchTool}
-                        onViewDocs={handleViewDocs}
-                      />
-                    ))}
+                    {filteredTools.map((tool) => {
+                      const system = systemsById.get(tool.system);
+                      return (
+                        <ToolCard
+                          key={tool.id}
+                          id={tool.id}
+                          name={tool.name}
+                          displayName={tool.displayName}
+                          description={tool.description}
+                          category={tool.category}
+                          tags={tool.tags}
+                          requiresSudo={tool.requiresSudo}
+                          interface={tool.interface}
+                          isDefault={tool.isDefault}
+                          quickStart={tool.documentation.quickStart}
+                          systemId={tool.system}
+                          systemName={system?.name}
+                          systemOs={system?.os}
+                          systemColor={system?.color}
+                        />
+                      );
+                    })}
                   </div>
                   )}
             </>
@@ -389,10 +354,10 @@ export function CategoriesDashboard () {
                 <div className='space-y-3'>
                   {categories
                     .sort((a, b) => b.toolCount - a.toolCount)
-                    .slice(0, 5)
+                    .slice(0, 8)
                     .map((category) => {
                       const Icon = category.icon;
-                      const maxCount = Math.max(...categories.map((c) => c.toolCount));
+                      const maxCount = Math.max(...categories.map((c) => c.toolCount), 1);
                       const percentage = (category.toolCount / maxCount) * 100;
 
                       return (

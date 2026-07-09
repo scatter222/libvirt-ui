@@ -1,8 +1,7 @@
 import { Badge } from '@/app/components/ui/badge';
-import { Button } from '@/app/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/app/components/ui/card';
 
-import { Terminal, ExternalLink, Play, Copy, Shield } from 'lucide-react';
+import { Terminal, Copy, Shield, Server, Star } from 'lucide-react';
 
 interface ToolCardProps {
   id: string;
@@ -12,30 +11,49 @@ interface ToolCardProps {
   category?: string;
   tags?: string[];
   requiresSudo?: boolean;
-  launchType?: 'terminal' | 'gui';
+  interface?: 'cli' | 'gui';
+  isDefault?: boolean;
   quickStart?: string;
-  onLaunch: (id: string) => void;
-  onViewDocs?: (id: string) => void;
+  systemId?: string;
+  systemName?: string;
+  systemOs?: string;
+  systemColor?: string;
 }
 
+// Map a config color token to a tailwind dot/text color.
+const systemDotColor: Record<string, string> = {
+  orange: 'bg-orange-400',
+  green: 'bg-green-400',
+  cyan: 'bg-cyan-400',
+  pink: 'bg-pink-400',
+  purple: 'bg-purple-400',
+  blue: 'bg-blue-400',
+  red: 'bg-red-400',
+  yellow: 'bg-yellow-400'
+};
+
 export function ToolCard ({
-  id,
+  id: _id,
   name,
   displayName,
   description,
   category: _category,
   tags,
   requiresSudo,
-  launchType,
+  interface: toolInterface,
+  isDefault,
   quickStart,
-  onLaunch,
-  onViewDocs
+  systemName,
+  systemOs,
+  systemColor
 }: ToolCardProps) {
   const handleCopyCommand = () => {
     if (quickStart) {
       navigator.clipboard.writeText(quickStart);
     }
   };
+
+  const dotColor = (systemColor && systemDotColor[systemColor]) || 'bg-primary';
 
   return (
     <Card className='relative overflow-hidden glass-card glass-card-hover group h-full flex flex-col'>
@@ -52,8 +70,13 @@ export function ToolCard ({
               <CardTitle className='text-lg font-semibold text-white/95 tracking-tight'>
                 {displayName || name}
               </CardTitle>
+              {isDefault && (
+                <div className='text-yellow-400' title='Installed by default'>
+                  <Star className='w-4 h-4 fill-yellow-400' />
+                </div>
+              )}
               {requiresSudo && (
-                <div className='text-yellow-500' title='Requires sudo/admin privileges'>
+                <div className='text-yellow-500' title='Typically requires sudo/admin privileges'>
                   <Shield className='w-4 h-4' />
                 </div>
               )}
@@ -66,7 +89,7 @@ export function ToolCard ({
             variant='outline'
             className='bg-dark-300/50 text-text-light/70 border-border-light/30 flex items-center gap-1.5 ml-2'
           >
-            {launchType === 'gui'
+            {toolInterface === 'gui'
               ? (
                 <>
                   <span className='w-2 h-2 rounded-full bg-green-400' />
@@ -94,11 +117,11 @@ export function ToolCard ({
       </CardHeader>
 
       <CardContent className='relative flex-1 flex flex-col'>
-        {/* Quick start command */}
+        {/* Quick start command (reference only) */}
         {quickStart && (
           <div className='bg-dark-100/50 rounded-lg p-3 mb-4 border border-border-light/20 flex-1'>
             <div className='flex items-center justify-between mb-1'>
-              <span className='text-xs text-text-light/60 font-medium'>Quick Start</span>
+              <span className='text-xs text-text-light/60 font-medium'>Example</span>
               <button
                 onClick={handleCopyCommand}
                 className='text-text-light/40 hover:text-primary transition-colors'
@@ -113,29 +136,17 @@ export function ToolCard ({
           </div>
         )}
 
-        {/* Action buttons */}
-        <div className='flex gap-2 mt-auto'>
-          <Button
-            variant='default'
-            size='sm'
-            className='flex-1 h-9 bg-primary hover:bg-primary/90 transition-all hover:shadow-lg hover:shadow-primary/20'
-            onClick={() => onLaunch(id)}
-          >
-            <Play className='w-3.5 h-3.5 mr-1.5' />
-            Launch
-          </Button>
-          {onViewDocs && (
-            <Button
-              variant='outline'
-              size='sm'
-              className='h-9 px-3 border-border-light/50 hover:bg-secondary/50 hover:border-primary/50'
-              onClick={() => onViewDocs(id)}
-              title='View Documentation'
-            >
-              <ExternalLink className='w-4 h-4' />
-            </Button>
-          )}
-        </div>
+        {/* System location footer — which VM this tool lives on */}
+        {systemName && (
+          <div className='flex items-center gap-2 mt-auto pt-3 border-t border-border-light/20'>
+            <span className={`w-2 h-2 rounded-full ${dotColor} flex-shrink-0`} />
+            <Server className='w-3.5 h-3.5 text-text-light/50 flex-shrink-0' />
+            <span className='text-xs text-text-light/80 font-medium'>{systemName}</span>
+            {systemOs && (
+              <span className='text-xs text-text-light/50 truncate'>· {systemOs}</span>
+            )}
+          </div>
+        )}
       </CardContent>
     </Card>
   );
