@@ -1,10 +1,11 @@
 import { Button } from '@/app/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/app/components/ui/card';
 import { YaraRulesDialog } from '@/app/components/yara-rules-dialog';
+import { InputValidationDialog } from '@/app/components/input-validation-dialog';
 
 import {
   Activity, Terminal, Server, Globe2, TrendingUp,
-  Clock, Network, HardDrive, Download, FileSearch
+  Clock, Network, HardDrive, Download, FileSearch, ShieldCheck
 } from 'lucide-react';
 import { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
@@ -38,6 +39,7 @@ export function Dashboard () {
   });
   const [loading, setLoading] = useState(true);
   const [yaraDialogOpen, setYaraDialogOpen] = useState(false);
+  const [validationDialogOpen, setValidationDialogOpen] = useState(false);
 
   useEffect(() => {
     loadDashboardData();
@@ -273,6 +275,14 @@ export function Dashboard () {
                 <Button
                   variant='outline'
                   className='border-border-light/50 hover:bg-secondary/50 hover:border-primary/50'
+                  onClick={() => setValidationDialogOpen(true)}
+                >
+                  <ShieldCheck className='w-4 h-4 mr-2' />
+                  Input Validation Example
+                </Button>
+                <Button
+                  variant='outline'
+                  className='border-border-light/50 hover:bg-secondary/50 hover:border-primary/50'
                   onClick={() => console.log('Export data')}
                 >
                   <Download className='w-4 h-4 mr-2' />
@@ -285,6 +295,7 @@ export function Dashboard () {
       </div>
 
       <YaraRulesDialog open={yaraDialogOpen} onClose={() => setYaraDialogOpen(false)} />
+      <InputValidationDialog open={validationDialogOpen} onClose={() => setValidationDialogOpen(false)} />
     </div>
   );
 }
