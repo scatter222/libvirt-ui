@@ -1,12 +1,12 @@
 import { Button } from '@/app/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/app/components/ui/card';
-import { LocalTemplateCard, LocalVmCard, RemoteVmCard } from '@/app/components/vm-card';
+import { LocalTemplateLane, LocalVmCard, RemoteVmCard } from '@/app/components/vm-card';
 import type { LocalVmTemplate, LocalVmInstance, RemoteVmInstance, VmAction } from '@/app/components/vm-card';
 
 import {
   RefreshCw, Server, Monitor, Cloud,
   Cpu, MemoryStick, HardDrive, Rocket,
-  Loader2, X, AlertTriangle, Boxes
+  Loader2, X, AlertTriangle
 } from 'lucide-react';
 import { useCallback, useEffect, useRef, useState } from 'react';
 
@@ -433,79 +433,52 @@ export function VMDashboard () {
             </button>
           </div>
 
-          {/* Local VMs Tab */}
+          {/* Local VMs Tab — one lane per template, its instances inside */}
           {activeTab === 'local' && (
-            <div className='animate-fade-in space-y-8'>
-              {/* Templates */}
-              <div>
-                <h2 className='text-lg font-semibold text-white/90 mb-4 flex items-center gap-2'>
-                  <Rocket className='w-5 h-5 text-primary' />
-                  Templates
-                </h2>
-                {localTemplates.length === 0
-                  ? (
-                    <div className='flex flex-col items-center justify-center py-16 px-8 glass-card rounded-xl'>
-                      <Server className='w-16 h-16 text-primary/60 mb-6' />
-                      <h3 className='text-xl font-semibold mb-3 text-white/90'>No Local VM Templates Configured</h3>
-                      <p className='text-sm text-text-light/60 text-center max-w-md'>
-                        Add OVA files to the images directory and configure them in local-vms.yaml.
-                      </p>
-                    </div>
-                    )
-                  : (
-                    <div className='grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-5'>
-                      {localTemplates.map((tpl) => (
-                        <LocalTemplateCard
-                          key={tpl.name}
-                          template={tpl}
-                          deploying={tpl.name in deployingTemplates}
-                          deployMessage={deployingTemplates[tpl.name]}
-                          onDeploy={() => handleDeploy(tpl.name)}
-                        />
-                      ))}
-                    </div>
-                    )}
-              </div>
-
-              {/* Deployed instances */}
-              <div>
-                <h2 className='text-lg font-semibold text-white/90 mb-4 flex items-center gap-2'>
-                  <Boxes className='w-5 h-5 text-primary' />
-                  Deployed VMs
-                  {localInstances.length > 0 && (
-                    <span className='text-xs bg-primary/20 text-primary px-2 py-0.5 rounded-full'>{localInstances.length}</span>
+            <div className='animate-fade-in'>
+              {localTemplates.length === 0
+                ? (
+                  <div className='flex flex-col items-center justify-center py-16 px-8 glass-card rounded-xl'>
+                    <Server className='w-16 h-16 text-primary/60 mb-6' />
+                    <h3 className='text-xl font-semibold mb-3 text-white/90'>No Local VM Templates Configured</h3>
+                    <p className='text-sm text-text-light/60 text-center max-w-md'>
+                      Add OVA files to the images directory and configure them in local-vms.yaml.
+                    </p>
+                  </div>
+                  )
+                : (
+                  <div className='space-y-6'>
+                    {localTemplates.map((tpl) => (
+                      <LocalTemplateLane
+                        key={tpl.name}
+                        template={tpl}
+                        deploying={tpl.name in deployingTemplates}
+                        deployMessage={deployingTemplates[tpl.name]}
+                        onDeploy={() => handleDeploy(tpl.name)}
+                      >
+                        {sortedInstances
+                          .filter((inst) => inst.templateName === tpl.name)
+                          .map((inst) => (
+                            <LocalVmCard
+                              key={inst.name}
+                              instance={inst}
+                              busyAction={pendingOps[inst.name]?.action ?? null}
+                              busyMessage={pendingOps[inst.name]?.message}
+                              flashMessage={flashes[inst.name]}
+                              onStart={() => handleLocalStart(inst.name)}
+                              onStop={() => handleLocalStop(inst.name)}
+                              onRestart={() => handleLocalRestart(inst.name)}
+                              onConsole={() => handleLocalConsole(inst.name)}
+                              onDelete={(deleteData) => handleLocalDelete(inst.name, deleteData)}
+                              onOpenSharedFolder={() => handleOpenSharedFolder(inst.name)}
+                              onSaveMetadata={(label, notes) => handleSaveMetadata(inst.name, label, notes)}
+                              onDropFiles={(files) => handleDropFiles(inst.name, files)}
+                            />
+                          ))}
+                      </LocalTemplateLane>
+                    ))}
+                  </div>
                   )}
-                </h2>
-                {sortedInstances.length === 0
-                  ? (
-                    <div className='p-6 glass-card rounded-xl text-center'>
-                      <p className='text-sm text-text-light/60'>
-                        No VMs deployed yet. Deploy one from a template above — VMs created manually in VirtualBox under a matching name are picked up automatically.
-                      </p>
-                    </div>
-                    )
-                  : (
-                    <div className='grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-5'>
-                      {sortedInstances.map((inst) => (
-                        <LocalVmCard
-                          key={inst.name}
-                          instance={inst}
-                          busyAction={pendingOps[inst.name]?.action ?? null}
-                          busyMessage={pendingOps[inst.name]?.message}
-                          flashMessage={flashes[inst.name]}
-                          onStart={() => handleLocalStart(inst.name)}
-                          onStop={() => handleLocalStop(inst.name)}
-                          onRestart={() => handleLocalRestart(inst.name)}
-                          onConsole={() => handleLocalConsole(inst.name)}
-                          onDelete={(deleteData) => handleLocalDelete(inst.name, deleteData)}
-                          onOpenSharedFolder={() => handleOpenSharedFolder(inst.name)}
-                          onSaveMetadata={(label, notes) => handleSaveMetadata(inst.name, label, notes)}
-                          onDropFiles={(files) => handleDropFiles(inst.name, files)}
-                        />
-                      ))}
-                    </div>
-                    )}
-              </div>
             </div>
           )}
 

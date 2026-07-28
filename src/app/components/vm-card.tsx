@@ -4,12 +4,13 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/app
 
 import {
   Play, Square, RotateCw, Monitor, HardDrive,
-  Cpu, MemoryStick, Trash2, Cloud, Rocket,
+  Cpu, MemoryStick, Trash2, Cloud,
   Loader2, FolderOpen, AlertTriangle, Copy,
-  Pencil, StickyNote, Check, FileDown
+  Pencil, StickyNote, Check, FileDown,
+  Server, Plus, Boxes
 } from 'lucide-react';
 import { useState } from 'react';
-import type { DragEvent } from 'react';
+import type { DragEvent, ReactNode } from 'react';
 
 export type LocalVmState = 'running' | 'stopped' | 'paused' | 'suspended';
 
@@ -61,11 +62,12 @@ export interface RemoteVmInstance {
 
 export type VmAction = 'start' | 'stop' | 'restart' | 'console' | 'delete' | 'deploy' | 'folder' | 'copy' | 'edit';
 
-interface LocalTemplateCardProps {
+interface LocalTemplateLaneProps {
   template: LocalVmTemplate;
   deploying: boolean;
   deployMessage?: string;
   onDeploy: () => void;
+  children?: ReactNode;
 }
 
 interface LocalVmCardProps {
@@ -178,55 +180,67 @@ function ProgressLine ({ message }: { message: string }) {
   );
 }
 
-export function LocalTemplateCard ({ template, deploying, deployMessage, onDeploy }: LocalTemplateCardProps) {
+/**
+ * A swim-lane for one VM template: the header carries the template identity
+ * (name, description, specs) and the "Create Instance" action; the lane body
+ * holds that template's instance cards.
+ */
+export function LocalTemplateLane ({ template, deploying, deployMessage, onDeploy, children }: LocalTemplateLaneProps) {
+  const hasInstances = template.instanceCount > 0;
+
   return (
-    <Card className='relative overflow-hidden glass-card glass-card-hover group'>
-      <div className='absolute -inset-2 bg-gradient-to-tr from-primary/20 to-transparent rounded-xl blur-xl opacity-0 group-hover:opacity-40 transition-opacity duration-500' />
-      <div className='absolute top-0 left-0 right-0 h-1 bg-gradient-to-r from-blue-400 to-blue-300/60' />
+    <section className='relative overflow-hidden glass-card rounded-xl animate-fade-in'>
+      <div className='absolute top-0 left-0 bottom-0 w-1 bg-gradient-to-b from-primary via-blue-selected/60 to-transparent' />
 
-      <CardHeader className='relative pb-3'>
-        <div className='flex items-start justify-between'>
-          <div className='space-y-1 flex-1'>
-            <CardTitle className='text-lg font-semibold text-white/95 tracking-tight'>{template.displayName}</CardTitle>
-            <CardDescription className='text-xs text-text-light/80 line-clamp-2'>{template.description}</CardDescription>
+      {/* Lane header — template identity + create action */}
+      <div className='relative px-5 py-4 border-b border-border-light/15 bg-dark-300/30'>
+        <div className='flex flex-wrap items-center gap-4 justify-between'>
+          <div className='flex items-center gap-3 min-w-0 flex-1'>
+            <div className='w-10 h-10 rounded-lg bg-primary/15 border border-primary/30 flex items-center justify-center shrink-0'>
+              <Server className='w-5 h-5 text-primary' />
+            </div>
+            <div className='min-w-0'>
+              <div className='flex items-center gap-2 flex-wrap'>
+                <h3 className='text-lg font-semibold text-white/95 tracking-tight'>{template.displayName}</h3>
+                <Badge variant='outline' className={`flex items-center gap-1 text-xs ${hasInstances ? 'bg-primary/15 text-primary border-primary/40' : 'bg-dark-100/60 text-text-light/50 border-border-light/30'}`}>
+                  <Copy className='w-3 h-3' />
+                  <span>{template.instanceCount} instance{template.instanceCount === 1 ? '' : 's'}</span>
+                </Badge>
+                {template.tags.slice(0, 3).map((tag) => (
+                  <Badge key={tag} className='bg-blue-selected/15 text-blue-selected/90 border border-blue-selected/30 text-[10px] px-1.5 py-0 font-medium hidden sm:inline-flex'>
+                    {tag}
+                  </Badge>
+                ))}
+              </div>
+              <p className='text-xs text-text-light/70 mt-0.5 truncate' title={template.description}>{template.description}</p>
+            </div>
           </div>
-          {template.instanceCount > 0 && (
-            <Badge variant='outline' className='bg-primary/15 text-primary border-primary/40 flex items-center gap-1 ml-2 shrink-0'>
-              <Copy className='w-3 h-3' />
-              <span>{template.instanceCount} deployed</span>
-            </Badge>
-          )}
+
+          <div className='flex items-center gap-4 shrink-0'>
+            <div className='hidden md:flex items-center gap-3 text-xs text-text-light/60'>
+              <span className='flex items-center gap-1.5'>
+                <MemoryStick className='w-3.5 h-3.5 text-primary/70' />
+                <span className='text-white/80 font-medium'>{template.memory} MB</span>
+              </span>
+              <span className='flex items-center gap-1.5'>
+                <Cpu className='w-3.5 h-3.5 text-primary/70' />
+                <span className='text-white/80 font-medium'>{template.cpus} CPU{template.cpus === 1 ? '' : 's'}</span>
+              </span>
+            </div>
+            <Button
+              variant='default'
+              size='sm'
+              className='h-9 px-4 bg-primary hover:bg-primary/90 transition-all hover:shadow-lg hover:shadow-primary/20 disabled:opacity-60'
+              onClick={onDeploy}
+              disabled={deploying || !template.ovaExists}
+            >
+              {deploying
+                ? <Loader2 className='w-3.5 h-3.5 mr-1.5 animate-spin' />
+                : <Plus className='w-3.5 h-3.5 mr-1.5' />}
+              {deploying ? 'Creating...' : 'Create Instance'}
+            </Button>
+          </div>
         </div>
-        {template.tags.length > 0 && (
-          <div className='flex flex-wrap items-center gap-1.5 mt-3'>
-            {template.tags.slice(0, 3).map((tag) => (
-              <Badge key={tag} className='bg-blue-selected/15 text-blue-selected/90 border border-blue-selected/30 text-xs px-2 py-0.5 font-medium'>
-                {tag}
-              </Badge>
-            ))}
-          </div>
-        )}
-      </CardHeader>
-
-      <CardContent className='relative'>
-        <SpecsBar memory={template.memory} cpus={template.cpus} />
-
-        <Button
-          variant='default'
-          size='sm'
-          className='w-full h-9 bg-primary hover:bg-primary/90 transition-all hover:shadow-lg hover:shadow-primary/20 disabled:opacity-60'
-          onClick={onDeploy}
-          disabled={deploying || !template.ovaExists}
-        >
-          {deploying
-            ? <Loader2 className='w-3.5 h-3.5 mr-1.5 animate-spin' />
-            : <Rocket className='w-3.5 h-3.5 mr-1.5' />}
-          {deploying
-            ? 'Deploying...'
-            : template.instanceCount > 0
-              ? 'Deploy Another'
-              : 'Deploy'}
-        </Button>
 
         {deploying && deployMessage && <ProgressLine message={deployMessage} />}
 
@@ -234,12 +248,30 @@ export function LocalTemplateCard ({ template, deploying, deployMessage, onDeplo
           <div className='flex items-center gap-2 mt-3 px-3 py-2 rounded-lg bg-amber-500/10 border border-amber-500/30'>
             <AlertTriangle className='w-3.5 h-3.5 text-amber-400 shrink-0' />
             <span className='text-xs text-text-light/80 truncate' title={template.ovaPath}>
-              OVA image not found
+              OVA image not found — new instances cannot be created
             </span>
           </div>
         )}
-      </CardContent>
-    </Card>
+      </div>
+
+      {/* Lane body — this template's instances */}
+      <div className='relative p-5'>
+        {hasInstances
+          ? (
+            <div className='grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4'>
+              {children}
+            </div>
+            )
+          : (
+            <div className='flex items-center justify-center gap-3 py-8 px-4 rounded-lg border border-dashed border-border-light/30 text-center'>
+              <Boxes className='w-5 h-5 text-text-light/40 shrink-0' />
+              <p className='text-xs text-text-light/50'>
+                No instances yet. Create one to get started — each instance gets its own shared folder.
+              </p>
+            </div>
+            )}
+      </div>
+    </section>
   );
 }
 
@@ -439,21 +471,12 @@ export function LocalVmCard ({
                     </p>
                     )
                   : (
-                    <CardDescription className='text-xs text-text-light/80 line-clamp-2'>{instance.description}</CardDescription>
+                    <CardDescription className='text-xs text-text-light/40 italic'>No notes — use the pencil to say what this is for</CardDescription>
                     )}
               </div>
               )}
           {!editing && <StateBadge state={instance.state} busyAction={busyAction} />}
         </div>
-        {instance.tags.length > 0 && !editing && (
-          <div className='flex flex-wrap items-center gap-1.5 mt-3'>
-            {instance.tags.slice(0, 3).map((tag) => (
-              <Badge key={tag} className='bg-blue-selected/15 text-blue-selected/90 border border-blue-selected/30 text-xs px-2 py-0.5 font-medium'>
-                {tag}
-              </Badge>
-            ))}
-          </div>
-        )}
       </CardHeader>
 
       <CardContent className='relative'>
