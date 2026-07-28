@@ -52,6 +52,7 @@ export function VMDashboard () {
   const [pendingOps, setPendingOps] = useState<Record<string, PendingOp>>({});
   const [deployingTemplates, setDeployingTemplates] = useState<Record<string, string>>({});
   const [errors, setErrors] = useState<UiError[]>([]);
+  const [flashes, setFlashes] = useState<Record<string, string>>({});
   const mounted = useRef(true);
 
   useEffect(() => {
@@ -71,6 +72,20 @@ export function VMDashboard () {
   }, []);
 
   const dismissError = (id: number) => setErrors((prev) => prev.filter((e) => e.id !== id));
+
+  // Short-lived per-card success confirmation (e.g. "Copied 3 files")
+  const pushFlash = useCallback((key: string, message: string) => {
+    setFlashes((prev) => ({ ...prev, [key]: message }));
+    setTimeout(() => {
+      if (!mounted.current) return;
+      setFlashes((prev) => {
+        if (prev[key] !== message) return prev;
+        const next = { ...prev };
+        delete next[key];
+        return next;
+      });
+    }, 5000);
+  }, []);
 
   const loadLocalVms = useCallback(async () => {
     try {
@@ -157,6 +172,18 @@ export function VMDashboard () {
     }
   };
 
+  const ACTION_ERROR_VERBS: Record<VmAction, string> = {
+    start: 'start',
+    stop: 'stop',
+    restart: 'restart',
+    console: 'open console for',
+    delete: 'delete',
+    deploy: 'deploy',
+    folder: 'open shared folder for',
+    copy: 'copy files to',
+    edit: 'save details for'
+  };
+
   const runLocalAction = async (
     name: string,
     action: VmAction,
@@ -167,7 +194,7 @@ export function VMDashboard () {
     try {
       await fn();
     } catch (error) {
-      pushError(`Failed to ${action} ${name}`, error);
+      pushError(`Failed to ${ACTION_ERROR_VERBS[action]} ${name}`, error);
     } finally {
       if (mounted.current) setPending(name, null);
       loadLocalVms();
@@ -221,17 +248,44 @@ export function VMDashboard () {
     await electron.ipcRenderer.invoke('local-vms:open-console', name);
   });
 
-  const handleLocalDelete = (name: string) => runLocalAction(name, 'delete', 'Removing VM and its disks...', async () => {
-    await electron.ipcRenderer.invoke('local-vms:delete', name);
+  const handleLocalDelete = (name: string, deleteData: boolean) => runLocalAction(
+    name,
+    'delete',
+    deleteData ? 'Removing VM, disks and shared folder data...' : 'Removing VM and its disks...',
+    async () => {
+      await electron.ipcRenderer.invoke('local-vms:delete', name, deleteData);
+    }
+  );
+
+  const handleOpenSharedFolder = (name: string) => runLocalAction(name, 'folder', 'Opening shared folder...', async () => {
+    await electron.ipcRenderer.invoke('local-vms:open-shared-folder', name);
   });
 
-  const handleOpenSharedFolder = async (name: string) => {
-    try {
-      await electron.ipcRenderer.invoke('local-vms:open-shared-folder', name);
-    } catch (error) {
-      pushError(`Failed to open shared folder for ${name}`, error);
+  const handleSaveMetadata = (name: string, label: string, notes: string) => runLocalAction(name, 'edit', 'Saving details...', async () => {
+    await electron.ipcRenderer.invoke('local-vms:set-metadata', name, { label, notes });
+    pushFlash(name, 'Details saved');
+  });
+
+  const handleDropFiles = (name: string, files: File[]) => runLocalAction(
+    name,
+    'copy',
+    `Copying ${files.length} item${files.length === 1 ? '' : 's'} into shared folder...`,
+    async () => {
+      const paths = files
+        .map((file) => {
+          try {
+            return electron.getPathForFile(file);
+          } catch {
+            return '';
+          }
+        })
+        .filter(Boolean);
+      if (paths.length === 0) throw new Error('Could not resolve the dropped files to paths');
+      const res = await electron.ipcRenderer.invoke('local-vms:copy-to-shared', name, paths);
+      const copied = (res as { copied: number }).copied;
+      pushFlash(name, `Copied ${copied} item${copied === 1 ? '' : 's'} into the shared folder`);
     }
-  };
+  );
 
   // --- Remote VM actions ---
   const runRemoteAction = async (key: string, action: VmAction, fn: () => Promise<void>) => {
@@ -438,12 +492,15 @@ export function VMDashboard () {
                           instance={inst}
                           busyAction={pendingOps[inst.name]?.action ?? null}
                           busyMessage={pendingOps[inst.name]?.message}
+                          flashMessage={flashes[inst.name]}
                           onStart={() => handleLocalStart(inst.name)}
                           onStop={() => handleLocalStop(inst.name)}
                           onRestart={() => handleLocalRestart(inst.name)}
                           onConsole={() => handleLocalConsole(inst.name)}
-                          onDelete={() => handleLocalDelete(inst.name)}
+                          onDelete={(deleteData) => handleLocalDelete(inst.name, deleteData)}
                           onOpenSharedFolder={() => handleOpenSharedFolder(inst.name)}
+                          onSaveMetadata={(label, notes) => handleSaveMetadata(inst.name, label, notes)}
+                          onDropFiles={(files) => handleDropFiles(inst.name, files)}
                         />
                       ))}
                     </div>

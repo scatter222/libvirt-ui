@@ -69,8 +69,11 @@ export interface LocalVmInstance {
   memory: number;
   cpus: number;
   tags: string[];
+  label?: string;
+  notes?: string;
   sharedFolderPath: string;
   sharedFolderAttached: boolean;
+  sharedFolderItemCount: number;
 }
 
 export interface DeployProgress {
@@ -109,6 +112,45 @@ function sharedFoldersRoot (config: LocalVmsConfig): string {
 
 function sharedFolderPathFor (config: LocalVmsConfig, instanceName: string): string {
   return path.join(sharedFoldersRoot(config), os.userInfo().username, instanceName);
+}
+
+async function isDirMissingOrEmpty (p: string): Promise<boolean> {
+  try {
+    const entries = await fs.promises.readdir(p);
+    return entries.length === 0;
+  } catch (err) {
+    return (err as NodeJS.ErrnoException).code === 'ENOENT';
+  }
+}
+
+/**
+ * Pick the host directory for a new attachment. A leftover folder from a
+ * previously deleted VM of the same name (which may hold artifacts the user
+ * chose to keep) is never reused: if the default directory has content, a
+ * fresh ".N"-suffixed one is allocated instead.
+ */
+async function allocateSharedFolderPath (config: LocalVmsConfig, instanceName: string): Promise<string> {
+  const base = sharedFolderPathFor(config, instanceName);
+  if (await isDirMissingOrEmpty(base)) return base;
+  for (let n = 2; ; n++) {
+    const candidate = `${base}.${n}`;
+    if (await isDirMissingOrEmpty(candidate)) return candidate;
+  }
+}
+
+async function countDirEntries (p: string): Promise<number> {
+  try {
+    return (await fs.promises.readdir(p)).length;
+  } catch {
+    return 0;
+  }
+}
+
+// Only paths under the per-user shared root may ever be deleted by the app
+function isInsideSharedRoot (config: LocalVmsConfig, p: string): boolean {
+  const root = path.resolve(sharedFoldersRoot(config), os.userInfo().username);
+  const resolved = path.resolve(p);
+  return resolved.startsWith(root + path.sep);
 }
 
 // VM names we generate or accept must be shell-safe and filesystem-safe
@@ -237,17 +279,24 @@ async function fileExists (p: string): Promise<boolean> {
 }
 
 /**
- * Make sure the per-user host directory exists and is attached to the VM as
- * an automounted shared folder. Safe to call repeatedly; only attaches while
- * the VM is powered off, so adopted VMs pick their folder up on next start.
+ * Make sure the VM has an automounted shared folder and return its host path.
+ * Already-attached folders are respected as-is; otherwise a fresh (empty)
+ * directory is allocated and, while the VM is powered off, attached. Safe to
+ * call repeatedly; adopted VMs pick their folder up on next start.
  */
-async function ensureSharedFolder (config: LocalVmsConfig, instanceName: string, info?: VmInfo): Promise<void> {
-  const hostPath = sharedFolderPathFor(config, instanceName);
+async function ensureSharedFolder (config: LocalVmsConfig, instanceName: string, info?: VmInfo): Promise<string> {
+  const vmInfo = info ?? await getVmInfo(instanceName);
+
+  const attached = vmInfo.sharedFolders.get(SHARED_FOLDER_NAME);
+  if (attached) {
+    await fs.promises.mkdir(attached, { recursive: true }).catch(() => {});
+    return attached;
+  }
+
+  const hostPath = await allocateSharedFolderPath(config, instanceName);
   await fs.promises.mkdir(hostPath, { recursive: true });
 
-  const vmInfo = info ?? await getVmInfo(instanceName);
-  if (vmInfo.sharedFolders.has(SHARED_FOLDER_NAME)) return;
-  if (vmInfo.state === 'running' || vmInfo.state === 'paused') return;
+  if (vmInfo.state === 'running' || vmInfo.state === 'paused') return hostPath;
 
   await vboxManage([
     'sharedfolder',
@@ -259,6 +308,37 @@ async function ensureSharedFolder (config: LocalVmsConfig, instanceName: string,
     hostPath,
     '--automount'
   ]);
+  return hostPath;
+}
+
+interface VmMetadata {
+  label?: string;
+  notes?: string;
+}
+
+const EXTRADATA_LABEL_KEY = 'launcher/label';
+const EXTRADATA_NOTES_KEY = 'launcher/notes';
+
+// User-assigned label and notes live in VirtualBox extradata, so they stay
+// with the VM itself and disappear when it is deleted.
+async function getVmMetadata (vmName: string): Promise<VmMetadata> {
+  const meta: VmMetadata = {};
+  try {
+    const output = await vboxManage([
+      'getextradata',
+      vmName,
+      'enumerate'
+    ]);
+    for (const line of output.split('\n')) {
+      const match = line.match(/^Key: (.+?), Value: (.*)$/);
+      if (!match) continue;
+      if (match[1] === EXTRADATA_LABEL_KEY) meta.label = match[2];
+      if (match[1] === EXTRADATA_NOTES_KEY) meta.notes = match[2];
+    }
+  } catch {
+    // No metadata available
+  }
+  return meta;
 }
 
 // Prevent concurrent VBoxManage operations on the same VM (double clicks,
@@ -302,9 +382,17 @@ export function setupLocalVmIPC (): void {
           instanceCount: instanceNames.length
         });
 
-        const infos = await Promise.all(instanceNames.map((name) => getVmInfo(name)));
-        instanceNames.forEach((name, i) => {
-          const info = infos[i];
+        const details = await Promise.all(instanceNames.map(async (name) => {
+          const [info, meta] = await Promise.all([getVmInfo(name), getVmMetadata(name)]);
+          // Attached mapping is the source of truth for the folder location;
+          // for unattached (adopted) VMs, predict where attachment will land.
+          const folderPath = info.sharedFolders.get(SHARED_FOLDER_NAME) ??
+            await allocateSharedFolderPath(config, name);
+          const itemCount = await countDirEntries(folderPath);
+          return { name, info, meta, folderPath, itemCount };
+        }));
+
+        for (const { name, info, meta, folderPath, itemCount } of details) {
           instances.push({
             name,
             templateName: tpl.name,
@@ -315,10 +403,13 @@ export function setupLocalVmIPC (): void {
             memory: info.memory ?? tpl.specs.memory,
             cpus: info.cpus ?? tpl.specs.cpus,
             tags: tpl.tags,
-            sharedFolderPath: sharedFolderPathFor(config, name),
-            sharedFolderAttached: info.sharedFolders.has(SHARED_FOLDER_NAME)
+            label: meta.label,
+            notes: meta.notes,
+            sharedFolderPath: folderPath,
+            sharedFolderAttached: info.sharedFolders.has(SHARED_FOLDER_NAME),
+            sharedFolderItemCount: itemCount
           });
-        });
+        }
       }
 
       return { templates, instances };
@@ -542,11 +633,14 @@ export function setupLocalVmIPC (): void {
     return { success: true };
   });
 
-  ipcMain.handle('local-vms:delete', async (_, vmName: string) => {
+  ipcMain.handle('local-vms:delete', async (_, vmName: string, deleteData?: boolean) => {
     assertSafeName(vmName);
     return withVmLock(vmName, async () => {
-      const state = await getVmState(vmName);
-      if (state === 'running' || state === 'paused') {
+      const config = await loadConfig();
+      const info = await getVmInfo(vmName);
+      const folderPath = info.sharedFolders.get(SHARED_FOLDER_NAME);
+
+      if (info.state === 'running' || info.state === 'paused') {
         await vboxManage([
           'controlvm',
           vmName,
@@ -559,17 +653,81 @@ export function setupLocalVmIPC (): void {
         vmName,
         '--delete'
       ]);
-      // The host shared folder directory is intentionally kept — it may hold
-      // evidence/artifacts the user still needs.
+
+      // Shared folder data is kept unless the user explicitly opted in, and
+      // only ever deleted from within the app-managed per-user shared root.
+      if (deleteData && folderPath && isInsideSharedRoot(config, folderPath)) {
+        await fs.promises.rm(folderPath, { recursive: true, force: true });
+      }
       return { success: true };
     });
+  });
+
+  ipcMain.handle('local-vms:set-metadata', async (_, vmName: string, meta: VmMetadata) => {
+    assertSafeName(vmName);
+    // Extradata is read back line-by-line, so values must stay single-line
+    const clean = (v: string | undefined) => (v ?? '').replace(/\s*[\r\n]+\s*/g, ' ').trim();
+    const label = clean(meta?.label);
+    const notes = clean(meta?.notes);
+    return withVmLock(vmName, async () => {
+      // Passing no value deletes the key
+      if (label) {
+        await vboxManage([
+          'setextradata',
+          vmName,
+          EXTRADATA_LABEL_KEY,
+          label
+        ]);
+      } else {
+        await vboxManage([
+          'setextradata',
+          vmName,
+          EXTRADATA_LABEL_KEY
+        ]);
+      }
+      if (notes) {
+        await vboxManage([
+          'setextradata',
+          vmName,
+          EXTRADATA_NOTES_KEY,
+          notes
+        ]);
+      } else {
+        await vboxManage([
+          'setextradata',
+          vmName,
+          EXTRADATA_NOTES_KEY
+        ]);
+      }
+      return { success: true };
+    });
+  });
+
+  ipcMain.handle('local-vms:copy-to-shared', async (_, vmName: string, sourcePaths: string[]) => {
+    assertSafeName(vmName);
+    if (!Array.isArray(sourcePaths) || sourcePaths.length === 0) {
+      throw new Error('No files to copy');
+    }
+    const config = await loadConfig();
+    const folderPath = await ensureSharedFolder(config, vmName);
+
+    let copied = 0;
+    for (const src of sourcePaths) {
+      if (typeof src !== 'string' || !src) continue;
+      const stat = await fs.promises.stat(src).catch((): null => null);
+      if (!stat) continue;
+      const dest = path.join(folderPath, path.basename(src));
+      await fs.promises.cp(src, dest, { recursive: true, force: true });
+      copied++;
+    }
+    if (copied === 0) throw new Error('None of the dropped items could be copied');
+    return { success: true, copied, folder: folderPath };
   });
 
   ipcMain.handle('local-vms:open-shared-folder', async (_, vmName: string) => {
     assertSafeName(vmName);
     const config = await loadConfig();
-    const hostPath = sharedFolderPathFor(config, vmName);
-    await fs.promises.mkdir(hostPath, { recursive: true });
+    const hostPath = await ensureSharedFolder(config, vmName);
     const result = await shell.openPath(hostPath);
     if (result) throw new Error(result);
     return { success: true, path: hostPath };

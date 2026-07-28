@@ -5,9 +5,11 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/app
 import {
   Play, Square, RotateCw, Monitor, HardDrive,
   Cpu, MemoryStick, Trash2, Cloud, Rocket,
-  Loader2, FolderOpen, AlertTriangle, Copy
+  Loader2, FolderOpen, AlertTriangle, Copy,
+  Pencil, StickyNote, Check, FileDown
 } from 'lucide-react';
-import { useEffect, useRef, useState } from 'react';
+import { useState } from 'react';
+import type { DragEvent } from 'react';
 
 export type LocalVmState = 'running' | 'stopped' | 'paused' | 'suspended';
 
@@ -34,8 +36,11 @@ export interface LocalVmInstance {
   memory: number;
   cpus: number;
   tags: string[];
+  label?: string;
+  notes?: string;
   sharedFolderPath: string;
   sharedFolderAttached: boolean;
+  sharedFolderItemCount: number;
 }
 
 export interface RemoteVmInstance {
@@ -54,7 +59,7 @@ export interface RemoteVmInstance {
   };
 }
 
-export type VmAction = 'start' | 'stop' | 'restart' | 'console' | 'delete' | 'deploy';
+export type VmAction = 'start' | 'stop' | 'restart' | 'console' | 'delete' | 'deploy' | 'folder' | 'copy' | 'edit';
 
 interface LocalTemplateCardProps {
   template: LocalVmTemplate;
@@ -67,12 +72,15 @@ interface LocalVmCardProps {
   instance: LocalVmInstance;
   busyAction: VmAction | null;
   busyMessage?: string;
+  flashMessage?: string;
   onStart: () => void;
   onStop: () => void;
   onRestart: () => void;
   onConsole: () => void;
-  onDelete: () => void;
+  onDelete: (deleteData: boolean) => void;
   onOpenSharedFolder: () => void;
+  onSaveMetadata: (label: string, notes: string) => void;
+  onDropFiles: (files: File[]) => void;
 }
 
 interface RemoteVmCardProps {
@@ -91,7 +99,10 @@ const BUSY_LABELS: Record<VmAction, string> = {
   restart: 'Restarting',
   console: 'Opening console',
   delete: 'Deleting',
-  deploy: 'Deploying'
+  deploy: 'Deploying',
+  folder: 'Opening folder',
+  copy: 'Copying files',
+  edit: 'Saving'
 };
 
 function StateBadge ({ state, busyAction }: { state: string; busyAction?: VmAction | null }) {
@@ -233,30 +244,55 @@ export function LocalTemplateCard ({ template, deploying, deployMessage, onDeplo
 }
 
 export function LocalVmCard ({
-  instance, busyAction, busyMessage,
-  onStart, onStop, onRestart, onConsole, onDelete, onOpenSharedFolder
+  instance, busyAction, busyMessage, flashMessage,
+  onStart, onStop, onRestart, onConsole, onDelete, onOpenSharedFolder, onSaveMetadata, onDropFiles
 }: LocalVmCardProps) {
+  const [editing, setEditing] = useState(false);
+  const [editLabel, setEditLabel] = useState('');
+  const [editNotes, setEditNotes] = useState('');
   const [confirmingDelete, setConfirmingDelete] = useState(false);
-  const confirmTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
-
-  useEffect(() => {
-    return () => {
-      if (confirmTimer.current) clearTimeout(confirmTimer.current);
-    };
-  }, []);
-
-  const handleDeleteClick = () => {
-    if (confirmingDelete) {
-      setConfirmingDelete(false);
-      if (confirmTimer.current) clearTimeout(confirmTimer.current);
-      onDelete();
-    } else {
-      setConfirmingDelete(true);
-      confirmTimer.current = setTimeout(() => setConfirmingDelete(false), 4000);
-    }
-  };
+  const [deleteData, setDeleteData] = useState(false);
+  const [dragDepth, setDragDepth] = useState(0);
 
   const busy = busyAction !== null;
+  const dragOver = dragDepth > 0;
+  const title = instance.label || instance.displayName;
+
+  const startEditing = () => {
+    setEditLabel(instance.label ?? '');
+    setEditNotes(instance.notes ?? '');
+    setEditing(true);
+  };
+
+  const saveEdits = () => {
+    setEditing(false);
+    onSaveMetadata(editLabel.trim(), editNotes.trim());
+  };
+
+  const confirmDelete = () => {
+    setConfirmingDelete(false);
+    onDelete(deleteData);
+  };
+
+  // Drag files from the desktop straight onto the card to copy them into the
+  // VM's shared folder
+  const handleDragEnter = (e: DragEvent<HTMLDivElement>) => {
+    if (busy || !e.dataTransfer.types.includes('Files')) return;
+    e.preventDefault();
+    setDragDepth((d) => d + 1);
+  };
+  const handleDragOver = (e: DragEvent<HTMLDivElement>) => {
+    if (busy || !e.dataTransfer.types.includes('Files')) return;
+    e.preventDefault();
+  };
+  const handleDragLeave = () => setDragDepth((d) => Math.max(0, d - 1));
+  const handleDrop = (e: DragEvent<HTMLDivElement>) => {
+    e.preventDefault();
+    setDragDepth(0);
+    if (busy) return;
+    const files = Array.from(e.dataTransfer.files);
+    if (files.length > 0) onDropFiles(files);
+  };
 
   const topBarColor = busy
     ? 'bg-gradient-to-r from-amber-500 to-amber-400/60'
@@ -269,19 +305,147 @@ export function LocalVmCard ({
     : <Icon className='w-3.5 h-3.5 mr-1.5' />);
 
   return (
-    <Card className={`relative overflow-hidden glass-card glass-card-hover group transition-opacity ${busy ? 'opacity-90' : ''}`}>
+    <Card
+      className={`relative overflow-hidden glass-card glass-card-hover group transition-all ${busy ? 'opacity-90' : ''} ${dragOver ? 'ring-2 ring-primary shadow-lg shadow-primary/30' : ''}`}
+      onDragEnter={handleDragEnter}
+      onDragOver={handleDragOver}
+      onDragLeave={handleDragLeave}
+      onDrop={handleDrop}
+    >
       <div className='absolute -inset-2 bg-gradient-to-tr from-primary/20 to-transparent rounded-xl blur-xl opacity-0 group-hover:opacity-40 transition-opacity duration-500' />
       <div className={`absolute top-0 left-0 right-0 h-1 ${topBarColor}`} />
 
+      {/* Drop target overlay */}
+      {dragOver && (
+        <div className='absolute inset-0 z-20 flex flex-col items-center justify-center gap-2 bg-dark-100/90 border-2 border-dashed border-primary rounded-xl pointer-events-none'>
+          <FileDown className='w-8 h-8 text-primary animate-bounce' />
+          <p className='text-sm font-medium text-white/90'>Drop to copy into shared folder</p>
+          <p className='text-xs text-text-light/60'>{title}</p>
+        </div>
+      )}
+
+      {/* Delete confirmation overlay */}
+      {confirmingDelete && (
+        <div className='absolute inset-0 z-20 flex items-center justify-center bg-dark-100/95 rounded-xl p-4 animate-fade-in'>
+          <div className='w-full space-y-3'>
+            <div className='flex items-center gap-2'>
+              <AlertTriangle className='w-4 h-4 text-red-400 shrink-0' />
+              <p className='text-sm font-semibold text-white/95'>Delete {title}?</p>
+            </div>
+            <p className='text-xs text-text-light/70'>
+              The VM and its disks are removed permanently.
+            </p>
+            <label className='flex items-start gap-2 px-3 py-2 rounded-lg bg-dark-300/60 border border-border-light/20 cursor-pointer hover:border-red-500/40 transition-colors'>
+              <input
+                type='checkbox'
+                checked={deleteData}
+                onChange={(e) => setDeleteData(e.target.checked)}
+                className='mt-0.5 accent-red-500'
+              />
+              <span className='text-xs text-text-light/80'>
+                Also delete shared folder data
+                {instance.sharedFolderItemCount > 0 && (
+                  <span className='text-red-400 font-medium'> ({instance.sharedFolderItemCount} item{instance.sharedFolderItemCount === 1 ? '' : 's'})</span>
+                )}
+                <span className='block text-text-light/50 mt-0.5'>Otherwise the folder is kept on disk.</span>
+              </span>
+            </label>
+            <div className='flex gap-2'>
+              <Button
+                variant='outline'
+                size='sm'
+                className='flex-1 h-8 border-border-light/50 hover:bg-secondary/50'
+                onClick={() => setConfirmingDelete(false)}
+              >
+                Cancel
+              </Button>
+              <Button
+                variant='destructive'
+                size='sm'
+                className='flex-1 h-8 bg-red-600 hover:bg-red-500'
+                onClick={confirmDelete}
+              >
+                <Trash2 className='w-3.5 h-3.5 mr-1.5' />
+                Delete
+              </Button>
+            </div>
+          </div>
+        </div>
+      )}
+
       <CardHeader className='relative pb-3'>
         <div className='flex items-start justify-between'>
-          <div className='space-y-1 flex-1'>
-            <CardTitle className='text-lg font-semibold text-white/95 tracking-tight'>{instance.displayName}</CardTitle>
-            <CardDescription className='text-xs text-text-light/80 line-clamp-2'>{instance.description}</CardDescription>
-          </div>
-          <StateBadge state={instance.state} busyAction={busyAction} />
+          {editing
+            ? (
+              <div className='flex-1 space-y-2 mr-2'>
+                <input
+                  value={editLabel}
+                  onChange={(e) => setEditLabel(e.target.value)}
+                  placeholder={instance.displayName}
+                  maxLength={60}
+                  autoFocus
+                  className='w-full bg-dark-100/60 border border-border-light/40 focus:border-primary/60 rounded-md px-2.5 py-1.5 text-sm font-semibold text-white/95 outline-none placeholder:text-text-light/40 transition-colors'
+                />
+                <textarea
+                  value={editNotes}
+                  onChange={(e) => setEditNotes(e.target.value)}
+                  placeholder='What is this VM for? e.g. "Case #4211 — phishing payload"'
+                  rows={2}
+                  maxLength={200}
+                  className='w-full bg-dark-100/60 border border-border-light/40 focus:border-primary/60 rounded-md px-2.5 py-1.5 text-xs text-text-light/90 outline-none placeholder:text-text-light/40 resize-none transition-colors'
+                />
+                <div className='flex gap-2'>
+                  <Button
+                    variant='default'
+                    size='sm'
+                    className='h-7 px-3 text-xs bg-primary hover:bg-primary/90'
+                    onClick={saveEdits}
+                  >
+                    <Check className='w-3 h-3 mr-1' />
+                    Save
+                  </Button>
+                  <Button
+                    variant='outline'
+                    size='sm'
+                    className='h-7 px-3 text-xs border-border-light/50 hover:bg-secondary/50'
+                    onClick={() => setEditing(false)}
+                  >
+                    Cancel
+                  </Button>
+                </div>
+              </div>
+              )
+            : (
+              <div className='space-y-1 flex-1 min-w-0'>
+                <div className='flex items-center gap-1.5'>
+                  <CardTitle className='text-lg font-semibold text-white/95 tracking-tight truncate'>{title}</CardTitle>
+                  <button
+                    onClick={startEditing}
+                    disabled={busy}
+                    title='Rename / add notes'
+                    className='opacity-0 group-hover:opacity-100 text-text-light/50 hover:text-primary transition-all shrink-0 disabled:opacity-0'
+                  >
+                    <Pencil className='w-3.5 h-3.5' />
+                  </button>
+                </div>
+                {instance.label && (
+                  <p className='text-[11px] text-text-light/50 uppercase tracking-wide'>{instance.displayName}</p>
+                )}
+                {instance.notes
+                  ? (
+                    <p className='text-xs text-amber-200/80 flex items-start gap-1.5'>
+                      <StickyNote className='w-3 h-3 mt-0.5 shrink-0 text-amber-400/80' />
+                      <span className='line-clamp-2'>{instance.notes}</span>
+                    </p>
+                    )
+                  : (
+                    <CardDescription className='text-xs text-text-light/80 line-clamp-2'>{instance.description}</CardDescription>
+                    )}
+              </div>
+              )}
+          {!editing && <StateBadge state={instance.state} busyAction={busyAction} />}
         </div>
-        {instance.tags.length > 0 && (
+        {instance.tags.length > 0 && !editing && (
           <div className='flex flex-wrap items-center gap-1.5 mt-3'>
             {instance.tags.slice(0, 3).map((tag) => (
               <Badge key={tag} className='bg-blue-selected/15 text-blue-selected/90 border border-blue-selected/30 text-xs px-2 py-0.5 font-medium'>
@@ -295,15 +459,22 @@ export function LocalVmCard ({
       <CardContent className='relative'>
         <SpecsBar memory={instance.memory} cpus={instance.cpus} />
 
-        {/* Shared folder */}
+        {/* Shared folder — click to open, or drop files anywhere on the card */}
         <button
           onClick={onOpenSharedFolder}
           disabled={busy}
-          title={`Open shared folder\n${instance.sharedFolderPath}${instance.sharedFolderAttached ? '' : '\n(attaches to the VM on next start)'}`}
+          title={`Open shared folder — drag files onto this card to copy them in\n${instance.sharedFolderPath}${instance.sharedFolderAttached ? '' : '\n(attaches to the VM on next start)'}`}
           className='w-full flex items-center gap-2 mb-4 px-3 py-2 rounded-lg bg-dark-100/50 border border-border-light/20 hover:border-primary/50 hover:bg-dark-100/80 transition-all text-left disabled:opacity-60 disabled:cursor-not-allowed'
         >
-          <FolderOpen className='w-3.5 h-3.5 text-primary/80 shrink-0' />
+          {busyAction === 'folder' || busyAction === 'copy'
+            ? <Loader2 className='w-3.5 h-3.5 text-primary animate-spin shrink-0' />
+            : <FolderOpen className='w-3.5 h-3.5 text-primary/80 shrink-0' />}
           <span className='text-xs text-text-light/70 font-mono truncate flex-1' dir='rtl'>{instance.sharedFolderPath}</span>
+          {instance.sharedFolderItemCount > 0 && (
+            <span className='text-[10px] text-text-light/60 bg-dark-300/80 border border-border-light/20 px-1.5 py-0.5 rounded-full shrink-0'>
+              {instance.sharedFolderItemCount}
+            </span>
+          )}
           {!instance.sharedFolderAttached && (
             <span className='w-1.5 h-1.5 rounded-full bg-amber-400 shrink-0' title='Shared folder attaches on next start' />
           )}
@@ -326,19 +497,26 @@ export function LocalVmCard ({
                 <Button
                   variant='outline'
                   size='sm'
-                  className={`h-9 px-3 transition-all ${
-                    confirmingDelete
-                      ? 'bg-red-600 border-red-500 text-white hover:bg-red-500'
-                      : 'border-border-light/50 hover:bg-red-600/20 hover:border-red-500/50 hover:text-red-400'
-                  }`}
-                  onClick={handleDeleteClick}
+                  className='h-9 px-3 border-border-light/50 hover:bg-secondary/50 hover:border-primary/50'
+                  onClick={onOpenSharedFolder}
                   disabled={busy}
-                  title={confirmingDelete ? 'Click again to permanently delete this VM' : 'Delete VM'}
+                  title='Open shared folder'
+                >
+                  {busyAction === 'folder'
+                    ? <Loader2 className='w-4 h-4 animate-spin' />
+                    : <FolderOpen className='w-4 h-4' />}
+                </Button>
+                <Button
+                  variant='outline'
+                  size='sm'
+                  className='h-9 px-3 border-border-light/50 hover:bg-red-600/20 hover:border-red-500/50 hover:text-red-400'
+                  onClick={() => setConfirmingDelete(true)}
+                  disabled={busy}
+                  title='Delete VM'
                 >
                   {busyAction === 'delete'
                     ? <Loader2 className='w-4 h-4 animate-spin' />
                     : <Trash2 className='w-4 h-4' />}
-                  {confirmingDelete && <span className='ml-1.5 text-xs font-semibold'>Sure?</span>}
                 </Button>
               </>
               )
@@ -364,6 +542,18 @@ export function LocalVmCard ({
                   {actionIcon('restart', RotateCw)}
                   Restart
                 </Button>
+                <Button
+                  variant='outline'
+                  size='sm'
+                  className='h-9 px-3 border-border-light/50 hover:bg-secondary/50 hover:border-primary/50'
+                  onClick={onOpenSharedFolder}
+                  disabled={busy}
+                  title='Open shared folder'
+                >
+                  {busyAction === 'folder'
+                    ? <Loader2 className='w-4 h-4 animate-spin' />
+                    : <FolderOpen className='w-4 h-4' />}
+                </Button>
               </>
               )}
 
@@ -384,6 +574,13 @@ export function LocalVmCard ({
         </div>
 
         {busy && busyMessage && <ProgressLine message={busyMessage} />}
+
+        {!busy && flashMessage && (
+          <div className='flex items-center gap-2 mt-3 px-3 py-2 rounded-lg bg-green-500/10 border border-green-500/30 animate-fade-in'>
+            <Check className='w-3.5 h-3.5 text-green-400 shrink-0' />
+            <span className='text-xs text-green-200/90 truncate' title={flashMessage}>{flashMessage}</span>
+          </div>
+        )}
       </CardContent>
     </Card>
   );

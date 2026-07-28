@@ -14,9 +14,9 @@
  */
 
 import { execFile } from 'child_process';
-import { readFile, access, mkdir, constants } from 'fs/promises';
-import { homedir, userInfo } from 'os';
-import { join } from 'path';
+import { readFile, writeFile, access, mkdir, readdir, rm, constants } from 'fs/promises';
+import { homedir, tmpdir, userInfo } from 'os';
+import { join, resolve, sep } from 'path';
 import { promisify } from 'util';
 import { parse as parseYaml } from 'yaml';
 
@@ -132,11 +132,32 @@ function nextInstanceName(templateName, registered) {
   }
 }
 
+async function isDirMissingOrEmpty(p) {
+  try {
+    const entries = await readdir(p);
+    return entries.length === 0;
+  } catch (err) {
+    return err.code === 'ENOENT';
+  }
+}
+
+// A leftover folder from a previously deleted VM is never reused for a new one
+async function allocateSharedFolderPath(config, instanceName) {
+  const base = sharedFolderPathFor(config, instanceName);
+  if (await isDirMissingOrEmpty(base)) return base;
+  for (let n = 2; ; n++) {
+    const candidate = `${base}.${n}`;
+    if (await isDirMissingOrEmpty(candidate)) return candidate;
+  }
+}
+
 async function ensureSharedFolder(config, instanceName) {
-  const hostPath = sharedFolderPathFor(config, instanceName);
-  await mkdir(hostPath, { recursive: true });
   const vmInfo = await getVmInfo(instanceName);
-  if (vmInfo.sharedFolders.has(SHARED_FOLDER_NAME)) return hostPath;
+  const attached = vmInfo.sharedFolders.get(SHARED_FOLDER_NAME);
+  if (attached) return attached;
+
+  const hostPath = await allocateSharedFolderPath(config, instanceName);
+  await mkdir(hostPath, { recursive: true });
   if (vmInfo.state === 'running' || vmInfo.state === 'paused') return hostPath;
   await vboxManage([
     'sharedfolder', 'add', instanceName,
@@ -147,6 +168,22 @@ async function ensureSharedFolder(config, instanceName) {
   return hostPath;
 }
 
+async function getVmMetadata(vmName) {
+  const meta = {};
+  try {
+    const output = await vboxManage(['getextradata', vmName, 'enumerate']);
+    for (const line of output.split('\n')) {
+      const match = line.match(/^Key: (.+?), Value: (.*)$/);
+      if (!match) continue;
+      if (match[1] === 'launcher/label') meta.label = match[2];
+      if (match[1] === 'launcher/notes') meta.notes = match[2];
+    }
+  } catch {
+    // No metadata
+  }
+  return meta;
+}
+
 async function deployInstance(config, tpl) {
   const registered = await getRegisteredVms();
   const instanceName = nextInstanceName(tpl.name, registered);
@@ -154,8 +191,14 @@ async function deployInstance(config, tpl) {
   await access(ovaPath, constants.F_OK);
   await vboxManage(['import', ovaPath, '--vsys', '0', '--vmname', instanceName], 20 * 60 * 1000);
   await vboxManage(['modifyvm', instanceName, '--memory', String(tpl.specs.memory), '--cpus', String(tpl.specs.cpus)]);
-  await ensureSharedFolder(config, instanceName);
-  return instanceName;
+  const folder = await ensureSharedFolder(config, instanceName);
+  return { name: instanceName, folder };
+}
+
+// Only paths under the per-user shared root may ever be deleted
+function isInsideSharedRoot(config, p) {
+  const root = resolve(sharedFolderPathFor(config, ''));
+  return resolve(p).startsWith(root + sep);
 }
 
 async function sleep(ms) {
@@ -209,13 +252,35 @@ console.log('\n[2] Instance name allocation and adoption matching');
   assert(instancesOfTemplate('sift', manual).length === 0, 'prefix alone does not match (sift vs sift-workstation)');
 }
 
-// --- Test 3: Shared folder path layout ---
+// --- Test 3: Shared folder path layout + fresh allocation ---
 console.log('\n[3] Shared folder path layout');
 {
   const p = sharedFolderPathFor(config, 'remnux-2');
   const user = userInfo().username;
   assert(p.includes(`/${user}/`), `path contains username: ${p}`);
   assert(p.endsWith('/remnux-2'), 'path ends with instance name');
+}
+
+console.log('\n[3b] Fresh folder allocation never reuses leftover data');
+{
+  // Simulate a leftover folder from a previously deleted VM using a temp root
+  const tmpRoot = join(tmpdir(), `vm-shared-test-${process.pid}`);
+  const tmpConfig = { settings: { ...config.settings, sharedFoldersDirectory: tmpRoot } };
+  const base = sharedFolderPathFor(tmpConfig, 'testvm');
+
+  assert(await allocateSharedFolderPath(tmpConfig, 'testvm') === base, 'missing dir: base path used');
+
+  await mkdir(base, { recursive: true });
+  assert(await allocateSharedFolderPath(tmpConfig, 'testvm') === base, 'empty dir: base path reused');
+
+  await writeFile(join(base, 'leftover.txt'), 'old case data');
+  assert(await allocateSharedFolderPath(tmpConfig, 'testvm') === `${base}.2`, 'non-empty dir: fresh .2 path allocated');
+
+  await mkdir(`${base}.2`, { recursive: true });
+  await writeFile(join(`${base}.2`, 'more.txt'), 'x');
+  assert(await allocateSharedFolderPath(tmpConfig, 'testvm') === `${base}.3`, 'both dirty: .3 allocated');
+
+  await rm(tmpRoot, { recursive: true, force: true });
 }
 
 // --- Test 4: OVA files exist ---
@@ -247,16 +312,17 @@ const deployed = [];
 
 console.log('  [6a] Deploy first instance (import + specs + shared folder)');
 try {
-  const name = await deployInstance(config, testTpl);
-  deployed.push(name);
+  const inst = await deployInstance(config, testTpl);
+  deployed.push(inst);
   const registered = await getRegisteredVms();
-  assert(registered.has(name), `instance registered: ${name}`);
-  const info = await getVmInfo(name);
+  assert(registered.has(inst.name), `instance registered: ${inst.name}`);
+  const info = await getVmInfo(inst.name);
   assert(info.memory === testTpl.specs.memory, `memory applied: ${info.memory}MB`);
   assert(info.cpus === testTpl.specs.cpus, `cpus applied: ${info.cpus}`);
   assert(info.sharedFolders.has(SHARED_FOLDER_NAME), 'shared folder attached');
   const hostPath = info.sharedFolders.get(SHARED_FOLDER_NAME);
-  assert(hostPath === sharedFolderPathFor(config, name), `shared folder host path: ${hostPath}`);
+  assert(hostPath === inst.folder, `shared folder host path: ${hostPath}`);
+  assert(isInsideSharedRoot(config, hostPath), 'shared folder is inside the per-user root');
   await access(hostPath, constants.F_OK);
   assert(true, 'shared folder directory exists on host');
 } catch (err) {
@@ -265,14 +331,14 @@ try {
 
 console.log('  [6b] Deploy second instance of the same template');
 try {
-  const name = await deployInstance(config, testTpl);
-  deployed.push(name);
-  assert(name !== deployed[0], `unique instance name allocated: ${name}`);
+  const inst = await deployInstance(config, testTpl);
+  deployed.push(inst);
+  assert(inst.name !== deployed[0].name, `unique instance name allocated: ${inst.name}`);
   const registered = await getRegisteredVms();
-  assert(registered.has(name), `second instance registered: ${name}`);
-  const info = await getVmInfo(name);
+  assert(registered.has(inst.name), `second instance registered: ${inst.name}`);
+  const info = await getVmInfo(inst.name);
   assert(info.sharedFolders.has(SHARED_FOLDER_NAME), 'second instance has its own shared folder');
-  assert(info.sharedFolders.get(SHARED_FOLDER_NAME) !== sharedFolderPathFor(config, deployed[0]),
+  assert(info.sharedFolders.get(SHARED_FOLDER_NAME) !== deployed[0].folder,
     'shared folders are per-instance, not shared between instances');
   const adopted = instancesOfTemplate(testTpl.name, registered);
   assert(adopted.length >= 2, `list now shows ${adopted.length} instances of ${testTpl.name}`);
@@ -281,7 +347,7 @@ try {
 }
 
 // --- Test 7: Lifecycle on the first deployed instance ---
-const lifecycleVm = deployed[0];
+const lifecycleVm = deployed[0]?.name;
 if (lifecycleVm) {
   console.log(`\n[7] Lifecycle: ${lifecycleVm}`);
 
@@ -332,12 +398,32 @@ if (lifecycleVm) {
   } catch (err) {
     assert(false, `Restart failed: ${err.message}`);
   }
+
+  console.log('  [7e] Label/notes metadata roundtrip (local-vms:set-metadata)');
+  try {
+    await vboxManage(['setextradata', lifecycleVm, 'launcher/label', 'Investigation Alpha']);
+    await vboxManage(['setextradata', lifecycleVm, 'launcher/notes', 'Case #4211 - phishing payload']);
+    const meta = await getVmMetadata(lifecycleVm);
+    assert(meta.label === 'Investigation Alpha', `label read back: "${meta.label}"`);
+    assert(meta.notes === 'Case #4211 - phishing payload', `notes read back: "${meta.notes}"`);
+    // Clearing: no value deletes the key
+    await vboxManage(['setextradata', lifecycleVm, 'launcher/label']);
+    const cleared = await getVmMetadata(lifecycleVm);
+    assert(cleared.label === undefined, 'label cleared');
+  } catch (err) {
+    assert(false, `Metadata roundtrip failed: ${err.message}`);
+  }
 }
 
-// --- Test 8: Delete all deployed instances ---
+// --- Test 8: Delete instances (one keeping data, one deleting data) ---
 console.log('\n[8] Delete deployed instances');
-for (const name of deployed) {
+for (let i = 0; i < deployed.length; i++) {
+  const { name, folder } = deployed[i];
+  const deleteData = i === deployed.length - 1;
   try {
+    // Seed the folder so keep/delete behaviour is observable
+    await writeFile(join(folder, 'artifact.txt'), 'test artifact');
+
     const state = await getVmState(name);
     if (state === 'running' || state === 'paused') {
       await vboxManage(['controlvm', name, 'poweroff']);
@@ -346,6 +432,16 @@ for (const name of deployed) {
     await vboxManage(['unregistervm', name, '--delete']);
     const registered = await getRegisteredVms();
     assert(!registered.has(name), `${name} unregistered after delete`);
+
+    if (deleteData && isInsideSharedRoot(config, folder)) {
+      await rm(folder, { recursive: true, force: true });
+      assert(await isDirMissingOrEmpty(folder), `${name}: shared folder data deleted on request`);
+    } else {
+      await access(join(folder, 'artifact.txt'), constants.F_OK);
+      assert(true, `${name}: shared folder data kept by default`);
+      // Clean up the seeded artifact so later runs start fresh
+      await rm(folder, { recursive: true, force: true });
+    }
   } catch (err) {
     assert(false, `Delete ${name} failed: ${err.message}`);
   }
@@ -354,11 +450,11 @@ for (const name of deployed) {
 // --- Test 9: Clean state after delete ---
 console.log('\n[9] Clean state after delete');
 const registeredAfter = await getRegisteredVms();
-for (const name of deployed) {
+for (const { name } of deployed) {
   assert(!registeredAfter.has(name), `${name} not in VBoxManage list`);
 }
 if (deployed[0]) {
-  const stateAfter = await getVmState(deployed[0]);
+  const stateAfter = await getVmState(deployed[0].name);
   assert(stateAfter === 'stopped', `getVmInfo returns "stopped" for missing VM (got: ${stateAfter})`);
 }
 
