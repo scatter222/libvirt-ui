@@ -113,7 +113,7 @@ function expandHome(p) {
 }
 
 function sharedFolderPathFor(config, instanceName) {
-  const root = expandHome(config.settings.sharedFoldersDirectory || '~/vm-shared');
+  const root = expandHome(config.settings.sharedFoldersDirectory || '/storage/vbox-vms');
   return join(root, userInfo().username, instanceName);
 }
 

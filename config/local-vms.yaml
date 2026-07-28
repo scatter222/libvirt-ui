@@ -3,7 +3,7 @@ settings:
   # Host directory that holds per-user, per-VM shared folders.
   # Each deployed VM gets <sharedFoldersDirectory>/<username>/<vm-name>
   # automounted into the guest as "shared" (e.g. /media/sf_shared).
-  sharedFoldersDirectory: ~/vm-shared
+  sharedFoldersDirectory: /storage/vbox-vms
   autoRefresh: true
   refreshInterval: 5000
 

@@ -107,7 +107,7 @@ function expandHome (p: string): string {
 }
 
 function sharedFoldersRoot (config: LocalVmsConfig): string {
-  return expandHome(config.settings.sharedFoldersDirectory || '~/vm-shared');
+  return expandHome(config.settings.sharedFoldersDirectory || '/storage/vbox-vms');
 }
 
 function sharedFolderPathFor (config: LocalVmsConfig, instanceName: string): string {
