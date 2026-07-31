@@ -14,9 +14,9 @@
  */
 
 import { execFile } from 'child_process';
-import { readFile, writeFile, access, mkdir, readdir, rm, constants } from 'fs/promises';
+import { readFile, writeFile, access, mkdir, readdir, rm, rmdir, constants } from 'fs/promises';
 import { homedir, tmpdir, userInfo } from 'os';
-import { join, resolve, sep } from 'path';
+import { dirname, join, resolve, sep } from 'path';
 import { promisify } from 'util';
 import { parse as parseYaml } from 'yaml';
 
@@ -112,9 +112,14 @@ function expandHome(p) {
   return p;
 }
 
-function sharedFolderPathFor(config, instanceName) {
+// <root>/<username>/<vm-name>/ holds machine files + disks; shared/ inside it
+function machineBaseFolder(config) {
   const root = expandHome(config.settings.sharedFoldersDirectory || '/storage/vbox-vms');
-  return join(root, userInfo().username, instanceName);
+  return join(root, userInfo().username);
+}
+
+function sharedFolderPathFor(config, instanceName) {
+  return join(machineBaseFolder(config), instanceName, 'shared');
 }
 
 function instancesOfTemplate(templateName, registered) {
@@ -189,15 +194,22 @@ async function deployInstance(config, tpl) {
   const instanceName = nextInstanceName(tpl.name, registered);
   const ovaPath = join(config.settings.imagesDirectory, tpl.ovaFile);
   await access(ovaPath, constants.F_OK);
-  await vboxManage(['import', ovaPath, '--vsys', '0', '--vmname', instanceName], 20 * 60 * 1000);
+  const baseFolder = machineBaseFolder(config);
+  await mkdir(baseFolder, { recursive: true });
+  await vboxManage(['import', ovaPath, '--vsys', '0', '--vmname', instanceName, '--basefolder', baseFolder], 20 * 60 * 1000);
   await vboxManage(['modifyvm', instanceName, '--memory', String(tpl.specs.memory), '--cpus', String(tpl.specs.cpus)]);
   const folder = await ensureSharedFolder(config, instanceName);
   return { name: instanceName, folder };
 }
 
+async function getVmConfigFile(vmName) {
+  const output = await vboxManage(['showvminfo', vmName, '--machinereadable']);
+  return output.match(/^CfgFile="(.+?)"$/m)?.[1] ?? '';
+}
+
 // Only paths under the per-user shared root may ever be deleted
 function isInsideSharedRoot(config, p) {
-  const root = resolve(sharedFolderPathFor(config, ''));
+  const root = resolve(machineBaseFolder(config));
   return resolve(p).startsWith(root + sep);
 }
 
@@ -252,13 +264,14 @@ console.log('\n[2] Instance name allocation and adoption matching');
   assert(instancesOfTemplate('sift', manual).length === 0, 'prefix alone does not match (sift vs sift-workstation)');
 }
 
-// --- Test 3: Shared folder path layout + fresh allocation ---
-console.log('\n[3] Shared folder path layout');
+// --- Test 3: Storage layout + fresh allocation ---
+console.log('\n[3] Storage layout (<root>/<user>/<vm>/ + shared/)');
 {
   const p = sharedFolderPathFor(config, 'remnux-2');
   const user = userInfo().username;
   assert(p.includes(`/${user}/`), `path contains username: ${p}`);
-  assert(p.endsWith('/remnux-2'), 'path ends with instance name');
+  assert(p.endsWith('/remnux-2/shared'), 'shared folder lives inside the VM directory');
+  assert(machineBaseFolder(config).endsWith(`/${user}`), `machine base folder: ${machineBaseFolder(config)}`);
 }
 
 console.log('\n[3b] Fresh folder allocation never reuses leftover data');
@@ -325,6 +338,9 @@ try {
   assert(isInsideSharedRoot(config, hostPath), 'shared folder is inside the per-user root');
   await access(hostPath, constants.F_OK);
   assert(true, 'shared folder directory exists on host');
+  const cfgFile = await getVmConfigFile(inst.name);
+  assert(cfgFile.startsWith(machineBaseFolder(config) + sep),
+    `machine files under storage root (not ~/VirtualBox VMs): ${cfgFile}`);
 } catch (err) {
   assert(false, `First deploy failed: ${err.message}`);
 }
@@ -435,7 +451,9 @@ for (let i = 0; i < deployed.length; i++) {
 
     if (deleteData && isInsideSharedRoot(config, folder)) {
       await rm(folder, { recursive: true, force: true });
+      await rmdir(dirname(folder)).catch(() => {});
       assert(await isDirMissingOrEmpty(folder), `${name}: shared folder data deleted on request`);
+      assert(await isDirMissingOrEmpty(dirname(folder)), `${name}: empty VM directory cleaned up`);
     } else {
       await access(join(folder, 'artifact.txt'), constants.F_OK);
       assert(true, `${name}: shared folder data kept by default`);

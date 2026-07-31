@@ -42,6 +42,7 @@ export interface LocalVmInstance {
   sharedFolderPath: string;
   sharedFolderAttached: boolean;
   sharedFolderItemCount: number;
+  guestAdditionsActive: boolean | null;
 }
 
 export interface RemoteVmInstance {
@@ -486,7 +487,7 @@ export function LocalVmCard ({
         <button
           onClick={onOpenSharedFolder}
           disabled={busy}
-          title={`Open shared folder — drag files onto this card to copy them in\n${instance.sharedFolderPath}${instance.sharedFolderAttached ? '' : '\n(attaches to the VM on next start)'}`}
+          title={`Open shared folder — drag files onto this card to copy them in\n${instance.sharedFolderPath}${instance.sharedFolderAttached ? '\nMounts in the guest as /media/sf_shared (via Guest Additions)' : '\n(attaches to the VM on next start)'}`}
           className='w-full flex items-center gap-2 mb-4 px-3 py-2 rounded-lg bg-dark-100/50 border border-border-light/20 hover:border-primary/50 hover:bg-dark-100/80 transition-all text-left disabled:opacity-60 disabled:cursor-not-allowed'
         >
           {busyAction === 'folder' || busyAction === 'copy'
@@ -501,7 +502,19 @@ export function LocalVmCard ({
           {!instance.sharedFolderAttached && (
             <span className='w-1.5 h-1.5 rounded-full bg-amber-400 shrink-0' title='Shared folder attaches on next start' />
           )}
+          {instance.sharedFolderAttached && instance.state === 'running' && instance.guestAdditionsActive === true && (
+            <span className='w-1.5 h-1.5 rounded-full bg-green-400 shrink-0' title='Live in the guest at /media/sf_shared' />
+          )}
         </button>
+
+        {instance.state === 'running' && instance.sharedFolderAttached && instance.guestAdditionsActive === false && (
+          <div className='flex items-start gap-2 mb-4 -mt-2 px-3 py-2 rounded-lg bg-amber-500/10 border border-amber-500/30'>
+            <AlertTriangle className='w-3.5 h-3.5 text-amber-400 shrink-0 mt-0.5' />
+            <span className='text-xs text-text-light/80'>
+              Guest Additions not detected — the shared folder won't appear inside the VM until they're installed.
+            </span>
+          </div>
+        )}
 
         <div className='flex gap-2'>
           {instance.state === 'stopped' || instance.state === 'suspended'

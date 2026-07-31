@@ -74,6 +74,8 @@ export interface LocalVmInstance {
   sharedFolderPath: string;
   sharedFolderAttached: boolean;
   sharedFolderItemCount: number;
+  // true/false while running; null when the VM is down (can't tell)
+  guestAdditionsActive: boolean | null;
 }
 
 export interface DeployProgress {
@@ -110,8 +112,21 @@ function sharedFoldersRoot (config: LocalVmsConfig): string {
   return expandHome(config.settings.sharedFoldersDirectory || '/storage/vbox-vms');
 }
 
+/**
+ * Everything for one VM lives under <root>/<username>/<vm-name>/:
+ * the VirtualBox machine files and disks (via import --basefolder), and a
+ * shared/ subdirectory automounted into the guest.
+ */
+function machineBaseFolder (config: LocalVmsConfig): string {
+  return path.join(sharedFoldersRoot(config), os.userInfo().username);
+}
+
+function vmDirFor (config: LocalVmsConfig, instanceName: string): string {
+  return path.join(machineBaseFolder(config), instanceName);
+}
+
 function sharedFolderPathFor (config: LocalVmsConfig, instanceName: string): string {
-  return path.join(sharedFoldersRoot(config), os.userInfo().username, instanceName);
+  return path.join(vmDirFor(config, instanceName), 'shared');
 }
 
 async function isDirMissingOrEmpty (p: string): Promise<boolean> {
@@ -240,6 +255,25 @@ async function getVmInfo (vmName: string): Promise<VmInfo> {
 
 async function getVmState (vmName: string): Promise<LocalVmState> {
   return (await getVmInfo(vmName)).state;
+}
+
+/**
+ * Shared folders only appear inside the guest when VirtualBox Guest Additions
+ * are running there. Only meaningful while the VM is up; the guest property
+ * is set by the additions when they start.
+ */
+async function getGuestAdditionsActive (vmName: string): Promise<boolean> {
+  try {
+    const output = await vboxManage([
+      'guestproperty',
+      'get',
+      vmName,
+      '/VirtualBox/GuestAdd/Version'
+    ]);
+    return output.startsWith('Value:');
+  } catch {
+    return false;
+  }
 }
 
 /**
@@ -389,10 +423,13 @@ export function setupLocalVmIPC (): void {
           const folderPath = info.sharedFolders.get(SHARED_FOLDER_NAME) ??
             await allocateSharedFolderPath(config, name);
           const itemCount = await countDirEntries(folderPath);
-          return { name, info, meta, folderPath, itemCount };
+          const guestAdditionsActive = info.state === 'running'
+            ? await getGuestAdditionsActive(name)
+            : null;
+          return { name, info, meta, folderPath, itemCount, guestAdditionsActive };
         }));
 
-        for (const { name, info, meta, folderPath, itemCount } of details) {
+        for (const { name, info, meta, folderPath, itemCount, guestAdditionsActive } of details) {
           instances.push({
             name,
             templateName: tpl.name,
@@ -407,7 +444,8 @@ export function setupLocalVmIPC (): void {
             notes: meta.notes,
             sharedFolderPath: folderPath,
             sharedFolderAttached: info.sharedFolders.has(SHARED_FOLDER_NAME),
-            sharedFolderItemCount: itemCount
+            sharedFolderItemCount: itemCount,
+            guestAdditionsActive
           });
         }
       }
@@ -445,14 +483,21 @@ export function setupLocalVmIPC (): void {
           throw new Error(`OVA file not found: ${ovaPath}`);
         }
 
-        progress('importing', 'Importing OVA image (this can take a few minutes)...');
+        // Machine files and disks go under <root>/<user>/<vm-name>/, not the
+        // VirtualBox default of ~/VirtualBox VMs
+        const baseFolder = machineBaseFolder(config);
+        await fs.promises.mkdir(baseFolder, { recursive: true });
+
+        progress('importing', `Importing OVA into ${path.join(baseFolder, instanceName)} (this can take a few minutes)...`);
         await vboxManage([
           'import',
           ovaPath,
           '--vsys',
           '0',
           '--vmname',
-          instanceName
+          instanceName,
+          '--basefolder',
+          baseFolder
         ], IMPORT_TIMEOUT_MS);
 
         progress('configuring', `Applying specs (${tpl.specs.memory} MB RAM, ${tpl.specs.cpus} CPUs)...`);
@@ -658,6 +703,9 @@ export function setupLocalVmIPC (): void {
       // only ever deleted from within the app-managed per-user shared root.
       if (deleteData && folderPath && isInsideSharedRoot(config, folderPath)) {
         await fs.promises.rm(folderPath, { recursive: true, force: true });
+        // VirtualBox can't remove the VM directory while shared/ was in it;
+        // now that it's gone, clear the empty directory too
+        await fs.promises.rmdir(path.dirname(folderPath)).catch(() => {});
       }
       return { success: true };
     });

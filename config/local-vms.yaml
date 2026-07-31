@@ -1,8 +1,10 @@
 settings:
   imagesDirectory: /opt/launcher-apps/vms
-  # Host directory that holds per-user, per-VM shared folders.
-  # Each deployed VM gets <sharedFoldersDirectory>/<username>/<vm-name>
-  # automounted into the guest as "shared" (e.g. /media/sf_shared).
+  # Root for all app-managed VM storage. Each deployed VM gets
+  # <sharedFoldersDirectory>/<username>/<vm-name>/ holding its VirtualBox
+  # machine files and disks (via import --basefolder), plus a shared/
+  # subdirectory automounted into the guest as "shared" (needs Guest
+  # Additions in the guest; appears as e.g. /media/sf_shared).
   sharedFoldersDirectory: /storage/vbox-vms
   autoRefresh: true
   refreshInterval: 5000
