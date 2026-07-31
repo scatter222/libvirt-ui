@@ -37,6 +37,7 @@ interface LocalVmTemplate {
 interface LocalVmsConfig {
   settings: {
     imagesDirectory: string;
+    machinesDirectory?: string;
     sharedFoldersDirectory?: string;
     autoRefresh: boolean;
     refreshInterval: number;
@@ -108,25 +109,24 @@ function expandHome (p: string): string {
   return p;
 }
 
-function sharedFoldersRoot (config: LocalVmsConfig): string {
-  return expandHome(config.settings.sharedFoldersDirectory || '/storage/vbox-vms');
-}
-
 /**
- * Everything for one VM lives under <root>/<username>/<vm-name>/:
- * the VirtualBox machine files and disks (via import --basefolder), and a
- * shared/ subdirectory automounted into the guest.
+ * Two separate per-user storage trees:
+ *  - machine files and disks:  <machinesDirectory>/<username>/<vm-name>/
+ *    (via import --basefolder)
+ *  - shared folders:           <sharedFoldersDirectory>/<username>/<vm-name>/
+ *    (automounted into the guest)
  */
 function machineBaseFolder (config: LocalVmsConfig): string {
-  return path.join(sharedFoldersRoot(config), os.userInfo().username);
+  const root = expandHome(config.settings.machinesDirectory || '/storage/vbox-vms');
+  return path.join(root, os.userInfo().username);
 }
 
-function vmDirFor (config: LocalVmsConfig, instanceName: string): string {
-  return path.join(machineBaseFolder(config), instanceName);
+function sharedFoldersRoot (config: LocalVmsConfig): string {
+  return expandHome(config.settings.sharedFoldersDirectory || '/storage/vbox-share');
 }
 
 function sharedFolderPathFor (config: LocalVmsConfig, instanceName: string): string {
-  return path.join(vmDirFor(config, instanceName), 'shared');
+  return path.join(sharedFoldersRoot(config), os.userInfo().username, instanceName);
 }
 
 async function isDirMissingOrEmpty (p: string): Promise<boolean> {
@@ -703,9 +703,6 @@ export function setupLocalVmIPC (): void {
       // only ever deleted from within the app-managed per-user shared root.
       if (deleteData && folderPath && isInsideSharedRoot(config, folderPath)) {
         await fs.promises.rm(folderPath, { recursive: true, force: true });
-        // VirtualBox can't remove the VM directory while shared/ was in it;
-        // now that it's gone, clear the empty directory too
-        await fs.promises.rmdir(path.dirname(folderPath)).catch(() => {});
       }
       return { success: true };
     });

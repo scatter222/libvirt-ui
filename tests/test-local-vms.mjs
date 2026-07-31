@@ -14,9 +14,9 @@
  */
 
 import { execFile } from 'child_process';
-import { readFile, writeFile, access, mkdir, readdir, rm, rmdir, constants } from 'fs/promises';
+import { readFile, writeFile, access, mkdir, readdir, rm, constants } from 'fs/promises';
 import { homedir, tmpdir, userInfo } from 'os';
-import { dirname, join, resolve, sep } from 'path';
+import { join, resolve, sep } from 'path';
 import { promisify } from 'util';
 import { parse as parseYaml } from 'yaml';
 
@@ -112,14 +112,16 @@ function expandHome(p) {
   return p;
 }
 
-// <root>/<username>/<vm-name>/ holds machine files + disks; shared/ inside it
+// Machine files/disks: <machinesDirectory>/<user>/<vm>; shared folders live
+// in a separate tree: <sharedFoldersDirectory>/<user>/<vm>
 function machineBaseFolder(config) {
-  const root = expandHome(config.settings.sharedFoldersDirectory || '/storage/vbox-vms');
+  const root = expandHome(config.settings.machinesDirectory || '/storage/vbox-vms');
   return join(root, userInfo().username);
 }
 
 function sharedFolderPathFor(config, instanceName) {
-  return join(machineBaseFolder(config), instanceName, 'shared');
+  const root = expandHome(config.settings.sharedFoldersDirectory || '/storage/vbox-share');
+  return join(root, userInfo().username, instanceName);
 }
 
 function instancesOfTemplate(templateName, registered) {
@@ -209,7 +211,7 @@ async function getVmConfigFile(vmName) {
 
 // Only paths under the per-user shared root may ever be deleted
 function isInsideSharedRoot(config, p) {
-  const root = resolve(machineBaseFolder(config));
+  const root = resolve(sharedFolderPathFor(config, ''));
   return resolve(p).startsWith(root + sep);
 }
 
@@ -234,6 +236,7 @@ try {
   config = parseYaml(contents);
   assert(config !== null, 'YAML parsed successfully');
   assert(config.settings?.imagesDirectory, `imagesDirectory: ${config.settings.imagesDirectory}`);
+  assert(config.settings?.machinesDirectory, `machinesDirectory: ${config.settings.machinesDirectory}`);
   assert(config.settings?.sharedFoldersDirectory, `sharedFoldersDirectory: ${config.settings.sharedFoldersDirectory}`);
   assert(config.vms?.length > 0, `${config.vms.length} VM templates configured`);
   assert(typeof config.settings.autoRefresh === 'boolean', `autoRefresh: ${config.settings.autoRefresh}`);
@@ -265,13 +268,14 @@ console.log('\n[2] Instance name allocation and adoption matching');
 }
 
 // --- Test 3: Storage layout + fresh allocation ---
-console.log('\n[3] Storage layout (<root>/<user>/<vm>/ + shared/)');
+console.log('\n[3] Storage layout (machines vs shared trees)');
 {
   const p = sharedFolderPathFor(config, 'remnux-2');
   const user = userInfo().username;
-  assert(p.includes(`/${user}/`), `path contains username: ${p}`);
-  assert(p.endsWith('/remnux-2/shared'), 'shared folder lives inside the VM directory');
+  assert(p.includes(`/${user}/`), `shared path contains username: ${p}`);
+  assert(p.endsWith('/remnux-2'), 'shared path ends with instance name');
   assert(machineBaseFolder(config).endsWith(`/${user}`), `machine base folder: ${machineBaseFolder(config)}`);
+  assert(!p.startsWith(machineBaseFolder(config) + sep), 'shared tree is separate from the machines tree');
 }
 
 console.log('\n[3b] Fresh folder allocation never reuses leftover data');
@@ -451,9 +455,7 @@ for (let i = 0; i < deployed.length; i++) {
 
     if (deleteData && isInsideSharedRoot(config, folder)) {
       await rm(folder, { recursive: true, force: true });
-      await rmdir(dirname(folder)).catch(() => {});
       assert(await isDirMissingOrEmpty(folder), `${name}: shared folder data deleted on request`);
-      assert(await isDirMissingOrEmpty(dirname(folder)), `${name}: empty VM directory cleaned up`);
     } else {
       await access(join(folder, 'artifact.txt'), constants.F_OK);
       assert(true, `${name}: shared folder data kept by default`);
