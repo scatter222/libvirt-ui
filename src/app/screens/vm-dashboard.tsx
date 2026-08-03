@@ -132,6 +132,20 @@ export function VMDashboard () {
     return () => clearInterval(interval);
   }, [loadAll]);
 
+  const setPending = (key: string, op: PendingOp | null) => {
+    setPendingOps((prev) => {
+      const next = { ...prev };
+      if (op) next[key] = op;
+      else delete next[key];
+      return next;
+    });
+  };
+
+  // Instance name each in-flight deploy is creating, per template — the
+  // background poll shows the new VM's card mid-deploy, so that card must be
+  // busy from the first progress event
+  const deployingInstanceFor = useRef<Record<string, string>>({});
+
   // Live deploy progress from the main process
   useEffect(() => {
     const listener = (_event: unknown, ...args: unknown[]) => {
@@ -141,21 +155,21 @@ export function VMDashboard () {
         if (!(progress.templateName in prev)) return prev;
         return { ...prev, [progress.templateName]: progress.message };
       });
+      if (progress.instanceName) {
+        if (progress.phase === 'done' || progress.phase === 'error') {
+          delete deployingInstanceFor.current[progress.templateName];
+          setPending(progress.instanceName, null);
+        } else {
+          deployingInstanceFor.current[progress.templateName] = progress.instanceName;
+          setPending(progress.instanceName, { action: 'deploy', message: progress.message });
+        }
+      }
     };
     electron.ipcRenderer.on('local-vms:progress', listener);
     return () => {
       electron.ipcRenderer.removeListener('local-vms:progress', listener);
     };
   }, []);
-
-  const setPending = (key: string, op: PendingOp | null) => {
-    setPendingOps((prev) => {
-      const next = { ...prev };
-      if (op) next[key] = op;
-      else delete next[key];
-      return next;
-    });
-  };
 
   // Poll until the VM reaches (or leaves) a state, so buttons stay in their
   // busy state for the whole real-world duration of slow operations.
@@ -209,7 +223,12 @@ export function VMDashboard () {
     } catch (error) {
       pushError(`Failed to deploy ${templateName}`, error);
     } finally {
+      // Clear the busy state on the instance card even if the final
+      // progress event never arrived
+      const instanceName = deployingInstanceFor.current[templateName];
+      delete deployingInstanceFor.current[templateName];
       if (mounted.current) {
+        if (instanceName) setPending(instanceName, null);
         setDeployingTemplates((prev) => {
           const next = { ...prev };
           delete next[templateName];
