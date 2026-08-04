@@ -191,17 +191,29 @@ async function getVmMetadata(vmName) {
   return meta;
 }
 
-async function deployInstance(config, tpl) {
+async function deployInstance(config, tpl, overrides = {}) {
   const registered = await getRegisteredVms();
+
+  const maxInstances = tpl.maxInstances && tpl.maxInstances > 0 ? tpl.maxInstances : null;
+  if (maxInstances !== null) {
+    const existing = instancesOfTemplate(tpl.name, registered).length;
+    if (existing >= maxInstances) {
+      throw new Error(`Instance limit reached for ${tpl.displayName} (${existing}/${maxInstances})`);
+    }
+  }
+
+  const memory = overrides.memory ?? tpl.specs.memory;
+  const cpus = overrides.cpus ?? tpl.specs.cpus;
+
   const instanceName = nextInstanceName(tpl.name, registered);
   const ovaPath = join(config.settings.imagesDirectory, tpl.ovaFile);
   await access(ovaPath, constants.F_OK);
   const baseFolder = machineBaseFolder(config);
   await mkdir(baseFolder, { recursive: true });
   await vboxManage(['import', ovaPath, '--vsys', '0', '--vmname', instanceName, '--basefolder', baseFolder], 20 * 60 * 1000);
-  await vboxManage(['modifyvm', instanceName, '--memory', String(tpl.specs.memory), '--cpus', String(tpl.specs.cpus)]);
+  await vboxManage(['modifyvm', instanceName, '--memory', String(memory), '--cpus', String(cpus)]);
   const folder = await ensureSharedFolder(config, instanceName);
-  return { name: instanceName, folder };
+  return { name: instanceName, folder, memory, cpus };
 }
 
 async function getVmConfigFile(vmName) {
@@ -239,6 +251,9 @@ try {
   assert(config.settings?.machinesDirectory, `machinesDirectory: ${config.settings.machinesDirectory}`);
   assert(config.settings?.sharedFoldersDirectory, `sharedFoldersDirectory: ${config.settings.sharedFoldersDirectory}`);
   assert(config.vms?.length > 0, `${config.vms.length} VM templates configured`);
+  for (const vm of config.vms) {
+    assert(!vm.maxInstances || vm.maxInstances > 0, `${vm.name}: maxInstances=${vm.maxInstances ?? 'unlimited'}`);
+  }
   assert(typeof config.settings.autoRefresh === 'boolean', `autoRefresh: ${config.settings.autoRefresh}`);
   assert(typeof config.settings.refreshInterval === 'number', `refreshInterval: ${config.settings.refreshInterval}ms`);
 } catch (err) {
@@ -349,14 +364,17 @@ try {
   assert(false, `First deploy failed: ${err.message}`);
 }
 
-console.log('  [6b] Deploy second instance of the same template');
+console.log('  [6b] Deploy second instance with custom specs');
 try {
-  const inst = await deployInstance(config, testTpl);
+  const customMemory = testTpl.specs.memory + 1024;
+  const inst = await deployInstance(config, testTpl, { memory: customMemory, cpus: 1 });
   deployed.push(inst);
   assert(inst.name !== deployed[0].name, `unique instance name allocated: ${inst.name}`);
   const registered = await getRegisteredVms();
   assert(registered.has(inst.name), `second instance registered: ${inst.name}`);
   const info = await getVmInfo(inst.name);
+  assert(info.memory === customMemory, `per-instance memory override applied: ${info.memory}MB`);
+  assert(info.cpus === 1, `per-instance cpu override applied: ${info.cpus}`);
   assert(info.sharedFolders.has(SHARED_FOLDER_NAME), 'second instance has its own shared folder');
   assert(info.sharedFolders.get(SHARED_FOLDER_NAME) !== deployed[0].folder,
     'shared folders are per-instance, not shared between instances');
@@ -364,6 +382,24 @@ try {
   assert(adopted.length >= 2, `list now shows ${adopted.length} instances of ${testTpl.name}`);
 } catch (err) {
   assert(false, `Second deploy failed: ${err.message}`);
+}
+
+console.log('  [6c] Instance limit is enforced');
+{
+  const current = instancesOfTemplate(testTpl.name, await getRegisteredVms()).length;
+  if (current === 0) {
+    assert(false, 'no instances present to test the limit against');
+  } else {
+    // A limit equal to the current count means the next deploy must refuse
+    const limitTpl = { ...testTpl, maxInstances: current };
+    let threw = false;
+    try {
+      await deployInstance(config, limitTpl);
+    } catch (err) {
+      threw = /Instance limit reached/.test(err.message);
+    }
+    assert(threw, `deploy beyond maxInstances (${current}/${current}) rejected with a clear error`);
+  }
 }
 
 // --- Test 7: Lifecycle on the first deployed instance ---

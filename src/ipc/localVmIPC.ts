@@ -27,6 +27,7 @@ interface LocalVmTemplate {
   category: string;
   ovaFile: string;
   isoFile?: string;
+  maxInstances?: number;
   specs: {
     memory: number;
     cpus: number;
@@ -58,6 +59,18 @@ export interface LocalTemplateInfo {
   ovaPath: string;
   ovaExists: boolean;
   instanceCount: number;
+  // null = unlimited
+  maxInstances: number | null;
+}
+
+export interface LocalHostInfo {
+  cpuCount: number;
+  totalMemMB: number;
+  freeMemMB: number;
+  // Sum over running instances of app-managed templates
+  allocatedMemMB: number;
+  allocatedCpus: number;
+  runningCount: number;
 }
 
 export interface LocalVmInstance {
@@ -166,6 +179,25 @@ function isInsideSharedRoot (config: LocalVmsConfig, p: string): boolean {
   const root = path.resolve(sharedFoldersRoot(config), os.userInfo().username);
   const resolved = path.resolve(p);
   return resolved.startsWith(root + path.sep);
+}
+
+/**
+ * Clamp-check requested specs against what the host physically has.
+ * Throws with a clear message rather than letting VBoxManage fail obscurely.
+ */
+function validateSpecs (memory: unknown, cpus: unknown): { memory: number; cpus: number } {
+  const mem = Number(memory);
+  const cpu = Number(cpus);
+  const hostMemMB = Math.round(os.totalmem() / (1024 * 1024));
+  const hostCpus = os.cpus().length;
+
+  if (!Number.isInteger(mem) || mem < 512 || mem > hostMemMB) {
+    throw new Error(`Invalid memory ${String(memory)} MB — must be between 512 and ${hostMemMB} MB (host total)`);
+  }
+  if (!Number.isInteger(cpu) || cpu < 1 || cpu > hostCpus) {
+    throw new Error(`Invalid CPU count ${String(cpus)} — must be between 1 and ${hostCpus} (host total)`);
+  }
+  return { memory: mem, cpus: cpu };
 }
 
 // VM names we generate or accept must be shell-safe and filesystem-safe
@@ -413,7 +445,8 @@ export function setupLocalVmIPC (): void {
           tags: tpl.tags,
           ovaPath,
           ovaExists: await fileExists(ovaPath),
-          instanceCount: instanceNames.length
+          instanceCount: instanceNames.length,
+          maxInstances: tpl.maxInstances && tpl.maxInstances > 0 ? tpl.maxInstances : null
         });
 
         const details = await Promise.all(instanceNames.map(async (name) => {
@@ -450,20 +483,44 @@ export function setupLocalVmIPC (): void {
         }
       }
 
-      return { templates, instances };
+      const running = instances.filter((i) => i.state === 'running' || i.state === 'paused');
+      const host: LocalHostInfo = {
+        cpuCount: os.cpus().length,
+        totalMemMB: Math.round(os.totalmem() / (1024 * 1024)),
+        freeMemMB: Math.round(os.freemem() / (1024 * 1024)),
+        allocatedMemMB: running.reduce((sum, i) => sum + i.memory, 0),
+        allocatedCpus: running.reduce((sum, i) => sum + i.cpus, 0),
+        runningCount: running.length
+      };
+
+      return { templates, instances, host };
     } catch (_error) {
       console.error('Failed to list local VMs:', _error);
-      return { templates: [], instances: [] };
+      return { templates: [], instances: [], host: null };
     }
   });
 
-  ipcMain.handle('local-vms:deploy', async (event, templateName: string) => {
+  ipcMain.handle('local-vms:deploy', async (event, templateName: string, overrides?: { memory?: number; cpus?: number }) => {
     assertSafeName(templateName);
     const config = await loadConfig();
     const tpl = config.vms.find((v) => v.name === templateName);
     if (!tpl) throw new Error(`VM template not found in config: ${templateName}`);
 
     const registered = await getRegisteredVms();
+
+    const maxInstances = tpl.maxInstances && tpl.maxInstances > 0 ? tpl.maxInstances : null;
+    if (maxInstances !== null) {
+      const existing = instancesOfTemplate(tpl.name, registered).length;
+      if (existing >= maxInstances) {
+        throw new Error(`Instance limit reached for ${tpl.displayName} (${existing}/${maxInstances})`);
+      }
+    }
+
+    const specs = validateSpecs(
+      overrides?.memory ?? tpl.specs.memory,
+      overrides?.cpus ?? tpl.specs.cpus
+    );
+
     const instanceName = nextInstanceName(tpl.name, registered);
     assertSafeName(instanceName);
 
@@ -500,14 +557,14 @@ export function setupLocalVmIPC (): void {
           baseFolder
         ], IMPORT_TIMEOUT_MS);
 
-        progress('configuring', `Applying specs (${tpl.specs.memory} MB RAM, ${tpl.specs.cpus} CPUs)...`);
+        progress('configuring', `Applying specs (${specs.memory} MB RAM, ${specs.cpus} CPUs)...`);
         await vboxManage([
           'modifyvm',
           instanceName,
           '--memory',
-          String(tpl.specs.memory),
+          String(specs.memory),
           '--cpus',
-          String(tpl.specs.cpus)
+          String(specs.cpus)
         ]);
 
         // Attach boot ISO if configured (e.g. live distro ISOs)
@@ -704,6 +761,26 @@ export function setupLocalVmIPC (): void {
       if (deleteData && folderPath && isInsideSharedRoot(config, folderPath)) {
         await fs.promises.rm(folderPath, { recursive: true, force: true });
       }
+      return { success: true };
+    });
+  });
+
+  ipcMain.handle('local-vms:set-specs', async (_, vmName: string, requested: { memory: number; cpus: number }) => {
+    assertSafeName(vmName);
+    const specs = validateSpecs(requested?.memory, requested?.cpus);
+    return withVmLock(vmName, async () => {
+      const state = await getVmState(vmName);
+      if (state === 'running' || state === 'paused') {
+        throw new Error('Stop the VM before changing its RAM or CPUs');
+      }
+      await vboxManage([
+        'modifyvm',
+        vmName,
+        '--memory',
+        String(specs.memory),
+        '--cpus',
+        String(specs.cpus)
+      ]);
       return { success: true };
     });
   });

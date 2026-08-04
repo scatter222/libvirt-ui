@@ -25,6 +25,24 @@ export interface LocalVmTemplate {
   ovaPath: string;
   ovaExists: boolean;
   instanceCount: number;
+  maxInstances: number | null;
+}
+
+export interface LocalHostInfo {
+  cpuCount: number;
+  totalMemMB: number;
+  freeMemMB: number;
+  allocatedMemMB: number;
+  allocatedCpus: number;
+  runningCount: number;
+}
+
+export function formatMB (mb: number): string {
+  if (mb >= 1024) {
+    const gb = mb / 1024;
+    return `${Number.isInteger(gb) ? gb : gb.toFixed(1)} GB`;
+  }
+  return `${mb} MB`;
 }
 
 export interface LocalVmInstance {
@@ -65,14 +83,16 @@ export type VmAction = 'start' | 'stop' | 'restart' | 'console' | 'delete' | 'de
 
 interface LocalTemplateLaneProps {
   template: LocalVmTemplate;
+  host: LocalHostInfo | null;
   deploying: boolean;
   deployMessage?: string;
-  onDeploy: () => void;
+  onDeploy: (memory: number, cpus: number) => void;
   children?: ReactNode;
 }
 
 interface LocalVmCardProps {
   instance: LocalVmInstance;
+  host: LocalHostInfo | null;
   busyAction: VmAction | null;
   busyMessage?: string;
   flashMessage?: string;
@@ -82,7 +102,7 @@ interface LocalVmCardProps {
   onConsole: () => void;
   onDelete: (deleteData: boolean) => void;
   onOpenSharedFolder: () => void;
-  onSaveMetadata: (label: string, notes: string) => void;
+  onSaveEdits: (edits: { label: string; notes: string; memory: number; cpus: number }) => void;
   onDropFiles: (files: File[]) => void;
 }
 
@@ -186,8 +206,31 @@ function ProgressLine ({ message }: { message: string }) {
  * (name, description, specs) and the "Create Instance" action; the lane body
  * holds that template's instance cards.
  */
-export function LocalTemplateLane ({ template, deploying, deployMessage, onDeploy, children }: LocalTemplateLaneProps) {
+export function LocalTemplateLane ({ template, host, deploying, deployMessage, onDeploy, children }: LocalTemplateLaneProps) {
+  const [configOpen, setConfigOpen] = useState(false);
+  const [memory, setMemory] = useState(template.memory);
+  const [cpus, setCpus] = useState(template.cpus);
+
   const hasInstances = template.instanceCount > 0;
+  const atLimit = template.maxInstances !== null && template.instanceCount >= template.maxInstances;
+  const countLabel = template.maxInstances !== null
+    ? `${template.instanceCount}/${template.maxInstances}`
+    : `${template.instanceCount}`;
+
+  const memoryValid = Number.isInteger(memory) && memory >= 512 && (!host || memory <= host.totalMemMB);
+  const cpusValid = Number.isInteger(cpus) && cpus >= 1 && (!host || cpus <= host.cpuCount);
+  const memoryOverFree = host !== null && memoryValid && memory > host.freeMemMB;
+
+  const openConfig = () => {
+    setMemory(template.memory);
+    setCpus(template.cpus);
+    setConfigOpen(true);
+  };
+
+  const create = () => {
+    setConfigOpen(false);
+    onDeploy(memory, cpus);
+  };
 
   return (
     <section className='relative overflow-hidden glass-card rounded-xl animate-fade-in'>
@@ -203,9 +246,19 @@ export function LocalTemplateLane ({ template, deploying, deployMessage, onDeplo
             <div className='min-w-0'>
               <div className='flex items-center gap-2 flex-wrap'>
                 <h3 className='text-lg font-semibold text-white/95 tracking-tight'>{template.displayName}</h3>
-                <Badge variant='outline' className={`flex items-center gap-1 text-xs ${hasInstances ? 'bg-primary/15 text-primary border-primary/40' : 'bg-dark-100/60 text-text-light/50 border-border-light/30'}`}>
+                <Badge
+                  variant='outline'
+                  className={`flex items-center gap-1 text-xs ${
+                    atLimit
+                      ? 'bg-amber-500/15 text-amber-400 border-amber-500/40'
+                      : hasInstances
+                        ? 'bg-primary/15 text-primary border-primary/40'
+                        : 'bg-dark-100/60 text-text-light/50 border-border-light/30'
+                  }`}
+                  title={template.maxInstances !== null ? `Up to ${template.maxInstances} instances of this template` : 'No instance limit'}
+                >
                   <Copy className='w-3 h-3' />
-                  <span>{template.instanceCount} instance{template.instanceCount === 1 ? '' : 's'}</span>
+                  <span>{countLabel} instance{template.maxInstances === null && template.instanceCount === 1 ? '' : 's'}</span>
                 </Badge>
                 {template.tags.slice(0, 3).map((tag) => (
                   <Badge key={tag} className='bg-blue-selected/15 text-blue-selected/90 border border-blue-selected/30 text-[10px] px-1.5 py-0 font-medium hidden sm:inline-flex'>
@@ -219,11 +272,11 @@ export function LocalTemplateLane ({ template, deploying, deployMessage, onDeplo
 
           <div className='flex items-center gap-4 shrink-0'>
             <div className='hidden md:flex items-center gap-3 text-xs text-text-light/60'>
-              <span className='flex items-center gap-1.5'>
+              <span className='flex items-center gap-1.5' title='Default RAM for new instances'>
                 <MemoryStick className='w-3.5 h-3.5 text-primary/70' />
-                <span className='text-white/80 font-medium'>{template.memory} MB</span>
+                <span className='text-white/80 font-medium'>{formatMB(template.memory)}</span>
               </span>
-              <span className='flex items-center gap-1.5'>
+              <span className='flex items-center gap-1.5' title='Default CPUs for new instances'>
                 <Cpu className='w-3.5 h-3.5 text-primary/70' />
                 <span className='text-white/80 font-medium'>{template.cpus} CPU{template.cpus === 1 ? '' : 's'}</span>
               </span>
@@ -232,16 +285,84 @@ export function LocalTemplateLane ({ template, deploying, deployMessage, onDeplo
               variant='default'
               size='sm'
               className='h-9 px-4 bg-primary hover:bg-primary/90 transition-all hover:shadow-lg hover:shadow-primary/20 disabled:opacity-60'
-              onClick={onDeploy}
-              disabled={deploying || !template.ovaExists}
+              onClick={() => (configOpen ? setConfigOpen(false) : openConfig())}
+              disabled={deploying || !template.ovaExists || atLimit}
+              title={atLimit ? `Instance limit reached (${countLabel})` : undefined}
             >
               {deploying
                 ? <Loader2 className='w-3.5 h-3.5 mr-1.5 animate-spin' />
                 : <Plus className='w-3.5 h-3.5 mr-1.5' />}
-              {deploying ? 'Creating...' : 'Create Instance'}
+              {deploying ? 'Creating...' : atLimit ? 'Limit Reached' : 'Create Instance'}
             </Button>
           </div>
         </div>
+
+        {/* New instance configuration */}
+        {configOpen && !deploying && (
+          <div className='mt-4 p-4 rounded-lg bg-dark-100/60 border border-primary/30 animate-fade-in'>
+            <div className='flex flex-wrap items-end gap-4'>
+              <label className='flex flex-col gap-1'>
+                <span className='text-[11px] uppercase tracking-wide text-text-light/60'>RAM (MB)</span>
+                <input
+                  type='number'
+                  min={512}
+                  max={host?.totalMemMB}
+                  step={512}
+                  value={memory}
+                  onChange={(e) => setMemory(parseInt(e.target.value, 10) || 0)}
+                  className={`w-28 bg-dark-300/60 border rounded-md px-2.5 py-1.5 text-sm text-white/95 outline-none transition-colors ${memoryValid ? 'border-border-light/40 focus:border-primary/60' : 'border-red-500/60'}`}
+                />
+              </label>
+              <label className='flex flex-col gap-1'>
+                <span className='text-[11px] uppercase tracking-wide text-text-light/60'>CPUs</span>
+                <input
+                  type='number'
+                  min={1}
+                  max={host?.cpuCount}
+                  value={cpus}
+                  onChange={(e) => setCpus(parseInt(e.target.value, 10) || 0)}
+                  className={`w-20 bg-dark-300/60 border rounded-md px-2.5 py-1.5 text-sm text-white/95 outline-none transition-colors ${cpusValid ? 'border-border-light/40 focus:border-primary/60' : 'border-red-500/60'}`}
+                />
+              </label>
+              <div className='flex gap-2'>
+                <Button
+                  variant='default'
+                  size='sm'
+                  className='h-9 px-4 bg-primary hover:bg-primary/90'
+                  onClick={create}
+                  disabled={!memoryValid || !cpusValid}
+                >
+                  <Plus className='w-3.5 h-3.5 mr-1.5' />
+                  Create
+                </Button>
+                <Button
+                  variant='outline'
+                  size='sm'
+                  className='h-9 px-3 border-border-light/50 hover:bg-secondary/50'
+                  onClick={() => setConfigOpen(false)}
+                >
+                  Cancel
+                </Button>
+              </div>
+            </div>
+            {host && (
+              <p className='text-xs text-text-light/60 mt-3'>
+                Host has <span className='text-white/80 font-medium'>{formatMB(host.totalMemMB)}</span> RAM
+                (<span className='text-white/80 font-medium'>{formatMB(host.freeMemMB)}</span> free) and{' '}
+                <span className='text-white/80 font-medium'>{host.cpuCount} CPUs</span>
+                {host.runningCount > 0 && (
+                  <> — running VMs are already assigned {formatMB(host.allocatedMemMB)} / {host.allocatedCpus} CPUs</>
+                )}.
+              </p>
+            )}
+            {memoryOverFree && (
+              <p className='text-xs text-amber-400/90 mt-1 flex items-center gap-1.5'>
+                <AlertTriangle className='w-3 h-3 shrink-0' />
+                More RAM than the host currently has free — the VM may run slowly or fail to start.
+              </p>
+            )}
+          </div>
+        )}
 
         {deploying && deployMessage && <ProgressLine message={deployMessage} />}
 
@@ -277,12 +398,14 @@ export function LocalTemplateLane ({ template, deploying, deployMessage, onDeplo
 }
 
 export function LocalVmCard ({
-  instance, busyAction, busyMessage, flashMessage,
-  onStart, onStop, onRestart, onConsole, onDelete, onOpenSharedFolder, onSaveMetadata, onDropFiles
+  instance, host, busyAction, busyMessage, flashMessage,
+  onStart, onStop, onRestart, onConsole, onDelete, onOpenSharedFolder, onSaveEdits, onDropFiles
 }: LocalVmCardProps) {
   const [editing, setEditing] = useState(false);
   const [editLabel, setEditLabel] = useState('');
   const [editNotes, setEditNotes] = useState('');
+  const [editMemory, setEditMemory] = useState(instance.memory);
+  const [editCpus, setEditCpus] = useState(instance.cpus);
   const [confirmingDelete, setConfirmingDelete] = useState(false);
   const [deleteData, setDeleteData] = useState(false);
   const [dragDepth, setDragDepth] = useState(0);
@@ -290,16 +413,28 @@ export function LocalVmCard ({
   const busy = busyAction !== null;
   const dragOver = dragDepth > 0;
   const title = instance.label || instance.displayName;
+  // VirtualBox can only change RAM/CPUs while the VM is powered off
+  const specsEditable = instance.state === 'stopped';
+
+  const memoryValid = Number.isInteger(editMemory) && editMemory >= 512 && (!host || editMemory <= host.totalMemMB);
+  const cpusValid = Number.isInteger(editCpus) && editCpus >= 1 && (!host || editCpus <= host.cpuCount);
 
   const startEditing = () => {
     setEditLabel(instance.label ?? '');
     setEditNotes(instance.notes ?? '');
+    setEditMemory(instance.memory);
+    setEditCpus(instance.cpus);
     setEditing(true);
   };
 
   const saveEdits = () => {
     setEditing(false);
-    onSaveMetadata(editLabel.trim(), editNotes.trim());
+    onSaveEdits({
+      label: editLabel.trim(),
+      notes: editNotes.trim(),
+      memory: specsEditable ? editMemory : instance.memory,
+      cpus: specsEditable ? editCpus : instance.cpus
+    });
   };
 
   const confirmDelete = () => {
@@ -427,12 +562,45 @@ export function LocalVmCard ({
                   maxLength={200}
                   className='w-full bg-dark-100/60 border border-border-light/40 focus:border-primary/60 rounded-md px-2.5 py-1.5 text-xs text-text-light/90 outline-none placeholder:text-text-light/40 resize-none transition-colors'
                 />
+                <div className='flex items-end gap-3'>
+                  <label className='flex flex-col gap-1'>
+                    <span className='text-[10px] uppercase tracking-wide text-text-light/60'>RAM (MB)</span>
+                    <input
+                      type='number'
+                      min={512}
+                      max={host?.totalMemMB}
+                      step={512}
+                      value={editMemory}
+                      onChange={(e) => setEditMemory(parseInt(e.target.value, 10) || 0)}
+                      disabled={!specsEditable}
+                      title={specsEditable ? undefined : 'Stop the VM to change RAM'}
+                      className={`w-24 bg-dark-100/60 border rounded-md px-2 py-1 text-xs text-white/95 outline-none transition-colors disabled:opacity-50 disabled:cursor-not-allowed ${memoryValid ? 'border-border-light/40 focus:border-primary/60' : 'border-red-500/60'}`}
+                    />
+                  </label>
+                  <label className='flex flex-col gap-1'>
+                    <span className='text-[10px] uppercase tracking-wide text-text-light/60'>CPUs</span>
+                    <input
+                      type='number'
+                      min={1}
+                      max={host?.cpuCount}
+                      value={editCpus}
+                      onChange={(e) => setEditCpus(parseInt(e.target.value, 10) || 0)}
+                      disabled={!specsEditable}
+                      title={specsEditable ? undefined : 'Stop the VM to change CPUs'}
+                      className={`w-16 bg-dark-100/60 border rounded-md px-2 py-1 text-xs text-white/95 outline-none transition-colors disabled:opacity-50 disabled:cursor-not-allowed ${cpusValid ? 'border-border-light/40 focus:border-primary/60' : 'border-red-500/60'}`}
+                    />
+                  </label>
+                  {!specsEditable && (
+                    <span className='text-[10px] text-text-light/50 pb-1.5'>Stop the VM to change specs</span>
+                  )}
+                </div>
                 <div className='flex gap-2'>
                   <Button
                     variant='default'
                     size='sm'
                     className='h-7 px-3 text-xs bg-primary hover:bg-primary/90'
                     onClick={saveEdits}
+                    disabled={specsEditable && (!memoryValid || !cpusValid)}
                   >
                     <Check className='w-3 h-3 mr-1' />
                     Save

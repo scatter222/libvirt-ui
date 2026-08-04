@@ -1,7 +1,7 @@
 import { Button } from '@/app/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/app/components/ui/card';
-import { LocalTemplateLane, LocalVmCard, RemoteVmCard } from '@/app/components/vm-card';
-import type { LocalVmTemplate, LocalVmInstance, RemoteVmInstance, VmAction } from '@/app/components/vm-card';
+import { LocalTemplateLane, LocalVmCard, RemoteVmCard, formatMB } from '@/app/components/vm-card';
+import type { LocalVmTemplate, LocalVmInstance, LocalHostInfo, RemoteVmInstance, VmAction } from '@/app/components/vm-card';
 
 import {
   RefreshCw, Server, Monitor, Cloud,
@@ -45,6 +45,7 @@ export function VMDashboard () {
   const [activeTab, setActiveTab] = useState<Tab>('local');
   const [localTemplates, setLocalTemplates] = useState<LocalVmTemplate[]>([]);
   const [localInstances, setLocalInstances] = useState<LocalVmInstance[]>([]);
+  const [hostInfo, setHostInfo] = useState<LocalHostInfo | null>(null);
   const [remoteTemplates, setRemoteTemplates] = useState<RemoteVmTemplate[]>([]);
   const [remoteInstances, setRemoteInstances] = useState<RemoteVmInstance[]>([]);
   const [loading, setLoading] = useState(true);
@@ -95,6 +96,7 @@ export function VMDashboard () {
       if (Array.isArray(result)) return;
       setLocalTemplates(result.templates as LocalVmTemplate[]);
       setLocalInstances(result.instances as LocalVmInstance[]);
+      setHostInfo((result.host as LocalHostInfo | null) ?? null);
     } catch (error) {
       console.error('Failed to load local VMs:', error);
     }
@@ -216,10 +218,10 @@ export function VMDashboard () {
   };
 
   // --- Local template deploy ---
-  const handleDeploy = async (templateName: string) => {
+  const handleDeploy = async (templateName: string, memory: number, cpus: number) => {
     setDeployingTemplates((prev) => ({ ...prev, [templateName]: 'Preparing...' }));
     try {
-      await electron.ipcRenderer.invoke('local-vms:deploy', templateName);
+      await electron.ipcRenderer.invoke('local-vms:deploy', templateName, { memory, cpus });
     } catch (error) {
       pushError(`Failed to deploy ${templateName}`, error);
     } finally {
@@ -280,9 +282,18 @@ export function VMDashboard () {
     await electron.ipcRenderer.invoke('local-vms:open-shared-folder', name);
   });
 
-  const handleSaveMetadata = (name: string, label: string, notes: string) => runLocalAction(name, 'edit', 'Saving details...', async () => {
-    await electron.ipcRenderer.invoke('local-vms:set-metadata', name, { label, notes });
-    pushFlash(name, 'Details saved');
+  const handleSaveEdits = (
+    instance: LocalVmInstance,
+    edits: { label: string; notes: string; memory: number; cpus: number }
+  ) => runLocalAction(instance.name, 'edit', 'Saving details...', async () => {
+    await electron.ipcRenderer.invoke('local-vms:set-metadata', instance.name, { label: edits.label, notes: edits.notes });
+    const specsChanged = edits.memory !== instance.memory || edits.cpus !== instance.cpus;
+    if (specsChanged) {
+      await electron.ipcRenderer.invoke('local-vms:set-specs', instance.name, { memory: edits.memory, cpus: edits.cpus });
+      pushFlash(instance.name, `Saved — now ${formatMB(edits.memory)} RAM / ${edits.cpus} CPU${edits.cpus === 1 ? '' : 's'}`);
+    } else {
+      pushFlash(instance.name, 'Details saved');
+    }
   });
 
   const handleDropFiles = (name: string, files: File[]) => runLocalAction(
@@ -467,13 +478,44 @@ export function VMDashboard () {
                   )
                 : (
                   <div className='space-y-6'>
+                    {/* Host capacity overview */}
+                    {hostInfo && (
+                      <div className='glass-card rounded-xl px-5 py-3 flex flex-wrap items-center gap-x-8 gap-y-2'>
+                        <span className='flex items-center gap-2 text-xs text-text-light/70'>
+                          <HardDrive className='w-4 h-4 text-primary/80' />
+                          <span className='text-white/90 font-semibold'>This machine</span>
+                        </span>
+                        <span className='flex items-center gap-2 text-xs text-text-light/70'>
+                          <MemoryStick className='w-3.5 h-3.5 text-primary/70' />
+                          <span><span className='text-white/85 font-medium'>{formatMB(hostInfo.totalMemMB)}</span> RAM total</span>
+                          <span className='text-text-light/40'>·</span>
+                          <span><span className='text-white/85 font-medium'>{formatMB(hostInfo.freeMemMB)}</span> free</span>
+                        </span>
+                        <span className='flex items-center gap-2 text-xs text-text-light/70'>
+                          <Cpu className='w-3.5 h-3.5 text-primary/70' />
+                          <span><span className='text-white/85 font-medium'>{hostInfo.cpuCount}</span> CPUs</span>
+                        </span>
+                        {hostInfo.runningCount > 0 && (
+                          <span className='flex items-center gap-2 text-xs text-text-light/70'>
+                            <span className='w-2 h-2 rounded-full bg-green-400 animate-pulse' />
+                            <span>
+                              {hostInfo.runningCount} running VM{hostInfo.runningCount === 1 ? '' : 's'} assigned{' '}
+                              <span className='text-white/85 font-medium'>{formatMB(hostInfo.allocatedMemMB)}</span> /{' '}
+                              <span className='text-white/85 font-medium'>{hostInfo.allocatedCpus} CPU{hostInfo.allocatedCpus === 1 ? '' : 's'}</span>
+                            </span>
+                          </span>
+                        )}
+                      </div>
+                    )}
+
                     {localTemplates.map((tpl) => (
                       <LocalTemplateLane
                         key={tpl.name}
                         template={tpl}
+                        host={hostInfo}
                         deploying={tpl.name in deployingTemplates}
                         deployMessage={deployingTemplates[tpl.name]}
-                        onDeploy={() => handleDeploy(tpl.name)}
+                        onDeploy={(memory, cpus) => handleDeploy(tpl.name, memory, cpus)}
                       >
                         {sortedInstances
                           .filter((inst) => inst.templateName === tpl.name)
@@ -481,6 +523,7 @@ export function VMDashboard () {
                             <LocalVmCard
                               key={inst.name}
                               instance={inst}
+                              host={hostInfo}
                               busyAction={pendingOps[inst.name]?.action ?? null}
                               busyMessage={pendingOps[inst.name]?.message}
                               flashMessage={flashes[inst.name]}
@@ -490,7 +533,7 @@ export function VMDashboard () {
                               onConsole={() => handleLocalConsole(inst.name)}
                               onDelete={(deleteData) => handleLocalDelete(inst.name, deleteData)}
                               onOpenSharedFolder={() => handleOpenSharedFolder(inst.name)}
-                              onSaveMetadata={(label, notes) => handleSaveMetadata(inst.name, label, notes)}
+                              onSaveEdits={(edits) => handleSaveEdits(inst, edits)}
                               onDropFiles={(files) => handleDropFiles(inst.name, files)}
                             />
                           ))}
