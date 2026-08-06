@@ -1,19 +1,7 @@
-import { defineConfig } from 'vitest/config';
+import path from 'node:path';
 
 import viteTsconfigPaths from 'vite-tsconfig-paths';
-
-import { productName, version } from './package.json';
-
-// Mirror the compile-time constants injected by config/vite.*.config.ts so
-// application modules can be imported unchanged under Vitest.
-const define = {
-  __DARWIN__: process.platform === 'darwin',
-  __WIN32__: process.platform === 'win32',
-  __LINUX__: process.platform === 'linux',
-  __APP_NAME__: JSON.stringify(productName),
-  __APP_VERSION__: JSON.stringify(version),
-  __DEV__: false
-};
+import { defineConfig } from 'vitest/config';
 
 export default defineConfig({
   test: {
@@ -34,12 +22,27 @@ export default defineConfig({
     projects: [
       {
         plugins: [viteTsconfigPaths()],
-        define,
         test: {
           name: 'renderer',
           environment: 'jsdom',
           include: ['tests/unit/renderer/**/*.test.{ts,tsx}'],
-          setupFiles: ['tests/setup/renderer.setup.ts']
+          setupFiles: ['tests/setup/app-defines.setup.ts', 'tests/setup/renderer.setup.ts']
+        }
+      },
+      {
+        plugins: [viteTsconfigPaths()],
+        resolve: {
+          alias: {
+            // The real electron module only works inside an Electron runtime;
+            // main-process units get this hand-rolled stand-in instead.
+            electron: path.resolve(import.meta.dirname, 'tests/mocks/electron.ts')
+          }
+        },
+        test: {
+          name: 'main',
+          environment: 'node',
+          include: ['tests/unit/main/**/*.test.ts'],
+          setupFiles: ['tests/setup/app-defines.setup.ts']
         }
       }
     ]
