@@ -72,17 +72,23 @@
     "@electron-forge/plugin-vite": "^7.8.2",
     "@electron-forge/shared-types": "^7.8.2",
     "@electron/fuses": "^1.0.0",
+    "@playwright/test": "^1.62.1",
     "@tailwindcss/vite": "^4.1.11",
+    "@testing-library/jest-dom": "^7.0.0",
+    "@testing-library/react": "^16.3.2",
+    "@testing-library/user-event": "^14.6.3",
     "@types/electron-squirrel-startup": "^1.0.2",
     "@types/react": "^19.1.9",
     "@types/react-dom": "^19.1.7",
     "@vitejs/plugin-react": "4.7.0",
+    "@vitest/coverage-v8": "^4.1.10",
     "classnames": "^2.5.1",
     "cross-env": "^10.0.0",
     "electron": "37.2.5",
     "electron-devtools-installer": "^4.0.0",
     "eslint": "^9.32.0",
     "husky": "9.1.7",
+    "jsdom": "^30.0.1",
     "lint-staged": "^16.1.2",
     "neostandard": "^0.12.2",
     "pinst": "^3.0.0",
@@ -94,6 +100,7 @@
     "vite": "^7.0.6",
     "vite-plugin-checker": "^0.10.2",
     "vite-plugin-svgr": "4.3.0",
-    "vite-tsconfig-paths": "^5.1.4"
+    "vite-tsconfig-paths": "^5.1.4",
+    "vitest": "^4.1.10"
   }
 }
