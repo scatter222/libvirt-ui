@@ -4,19 +4,63 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/app
 
 import {
   Play, Square, RotateCw, Monitor, HardDrive,
-  Cpu, MemoryStick, Download, Trash2, Cloud
+  Cpu, MemoryStick, Trash2, Cloud,
+  Loader2, FolderOpen, AlertTriangle, Copy,
+  Pencil, StickyNote, Check, FileDown,
+  Server, Plus, Boxes
 } from 'lucide-react';
+import { useState } from 'react';
+import type { DragEvent, ReactNode } from 'react';
 
-export interface LocalVm {
+export type LocalVmState = 'running' | 'stopped' | 'paused' | 'suspended';
+
+export interface LocalVmTemplate {
   name: string;
   displayName: string;
   description: string;
   category: string;
-  state: 'running' | 'stopped' | 'paused' | 'suspended' | 'available';
   memory: number;
   cpus: number;
   tags: string[];
-  imported: boolean;
+  ovaPath: string;
+  ovaExists: boolean;
+  instanceCount: number;
+  maxInstances: number | null;
+}
+
+export interface LocalHostInfo {
+  cpuCount: number;
+  totalMemMB: number;
+  freeMemMB: number;
+  allocatedMemMB: number;
+  allocatedCpus: number;
+  runningCount: number;
+}
+
+export function formatMB (mb: number): string {
+  if (mb >= 1024) {
+    const gb = mb / 1024;
+    return `${Number.isInteger(gb) ? gb : gb.toFixed(1)} GB`;
+  }
+  return `${mb} MB`;
+}
+
+export interface LocalVmInstance {
+  name: string;
+  templateName: string;
+  displayName: string;
+  description: string;
+  category: string;
+  state: LocalVmState;
+  memory: number;
+  cpus: number;
+  tags: string[];
+  label?: string;
+  notes?: string;
+  sharedFolderPath: string;
+  sharedFolderAttached: boolean;
+  sharedFolderItemCount: number;
+  guestAdditionsActive: boolean | null;
 }
 
 export interface RemoteVmInstance {
@@ -35,17 +79,36 @@ export interface RemoteVmInstance {
   };
 }
 
+export type VmAction = 'start' | 'stop' | 'restart' | 'console' | 'delete' | 'deploy' | 'folder' | 'copy' | 'edit';
+
+interface LocalTemplateLaneProps {
+  template: LocalVmTemplate;
+  host: LocalHostInfo | null;
+  deploying: boolean;
+  deployMessage?: string;
+  onDeploy: (memory: number, cpus: number) => void;
+  children?: ReactNode;
+}
+
 interface LocalVmCardProps {
-  vm: LocalVm;
+  instance: LocalVmInstance;
+  host: LocalHostInfo | null;
+  busyAction: VmAction | null;
+  busyMessage?: string;
+  flashMessage?: string;
   onStart: () => void;
   onStop: () => void;
   onRestart: () => void;
   onConsole: () => void;
-  onDelete: () => void;
+  onDelete: (deleteData: boolean) => void;
+  onOpenSharedFolder: () => void;
+  onSaveEdits: (edits: { label: string; notes: string; memory: number; cpus: number }) => void;
+  onDropFiles: (files: File[]) => void;
 }
 
 interface RemoteVmCardProps {
   instance: RemoteVmInstance;
+  busyAction?: VmAction | null;
   onStart: () => void;
   onStop: () => void;
   onRestart: () => void;
@@ -53,7 +116,28 @@ interface RemoteVmCardProps {
   onDelete: () => void;
 }
 
-function StateBadge ({ state }: { state: string }) {
+const BUSY_LABELS: Record<VmAction, string> = {
+  start: 'Starting',
+  stop: 'Stopping',
+  restart: 'Restarting',
+  console: 'Opening console',
+  delete: 'Deleting',
+  deploy: 'Deploying',
+  folder: 'Opening folder',
+  copy: 'Copying files',
+  edit: 'Saving'
+};
+
+function StateBadge ({ state, busyAction }: { state: string; busyAction?: VmAction | null }) {
+  if (busyAction) {
+    return (
+      <Badge variant='outline' className='bg-amber-500/20 text-amber-400 border-amber-500/50 flex items-center gap-1.5 ml-2'>
+        <Loader2 className='w-3 h-3 animate-spin' />
+        <span>{BUSY_LABELS[busyAction]}</span>
+      </Badge>
+    );
+  }
+
   const styles: Record<string, string> = {
     running: 'bg-green-500/20 text-green-400 border-green-500/50',
     stopped: 'bg-gray-500/20 text-gray-400 border-gray-500/50',
@@ -108,117 +192,607 @@ function SpecsBar ({ memory, cpus, diskSize }: { memory: number; cpus: number; d
   );
 }
 
-export function LocalVmCard ({ vm, onStart, onStop, onRestart, onConsole, onDelete }: LocalVmCardProps) {
-  const topBarColor = vm.state === 'running'
-    ? 'bg-gradient-to-r from-primary to-blue-selected/60'
-    : vm.state === 'available'
-      ? 'bg-gradient-to-r from-blue-400 to-blue-300/60'
-      : 'bg-border-light/30';
+function ProgressLine ({ message }: { message: string }) {
+  return (
+    <div className='flex items-center gap-2 mt-3 px-3 py-2 rounded-lg bg-primary/10 border border-primary/30 animate-fade-in'>
+      <Loader2 className='w-3.5 h-3.5 text-primary animate-spin shrink-0' />
+      <span className='text-xs text-text-light/90 truncate' title={message}>{message}</span>
+    </div>
+  );
+}
+
+/**
+ * A swim-lane for one VM template: the header carries the template identity
+ * (name, description, specs) and the "Create Instance" action; the lane body
+ * holds that template's instance cards.
+ */
+export function LocalTemplateLane ({ template, host, deploying, deployMessage, onDeploy, children }: LocalTemplateLaneProps) {
+  const [configOpen, setConfigOpen] = useState(false);
+  const [memory, setMemory] = useState(template.memory);
+  const [cpus, setCpus] = useState(template.cpus);
+
+  const hasInstances = template.instanceCount > 0;
+  const atLimit = template.maxInstances !== null && template.instanceCount >= template.maxInstances;
+  const countLabel = template.maxInstances !== null
+    ? `${template.instanceCount}/${template.maxInstances}`
+    : `${template.instanceCount}`;
+
+  const memoryValid = Number.isInteger(memory) && memory >= 512 && (!host || memory <= host.totalMemMB);
+  const cpusValid = Number.isInteger(cpus) && cpus >= 1 && (!host || cpus <= host.cpuCount);
+  const memoryOverFree = host !== null && memoryValid && memory > host.freeMemMB;
+
+  const openConfig = () => {
+    setMemory(template.memory);
+    setCpus(template.cpus);
+    setConfigOpen(true);
+  };
+
+  const create = () => {
+    setConfigOpen(false);
+    onDeploy(memory, cpus);
+  };
 
   return (
-    <Card className='relative overflow-hidden glass-card glass-card-hover group'>
+    <section className='relative overflow-hidden glass-card rounded-xl animate-fade-in'>
+      <div className='absolute top-0 left-0 bottom-0 w-1 bg-gradient-to-b from-primary via-blue-selected/60 to-transparent' />
+
+      {/* Lane header — template identity + create action */}
+      <div className='relative px-5 py-4 border-b border-border-light/15 bg-dark-300/30'>
+        <div className='flex flex-wrap items-center gap-4 justify-between'>
+          <div className='flex items-center gap-3 min-w-0 flex-1'>
+            <div className='w-10 h-10 rounded-lg bg-primary/15 border border-primary/30 flex items-center justify-center shrink-0'>
+              <Server className='w-5 h-5 text-primary' />
+            </div>
+            <div className='min-w-0'>
+              <div className='flex items-center gap-2 flex-wrap'>
+                <h3 className='text-lg font-semibold text-white/95 tracking-tight'>{template.displayName}</h3>
+                <Badge
+                  variant='outline'
+                  className={`flex items-center gap-1 text-xs ${
+                    atLimit
+                      ? 'bg-amber-500/15 text-amber-400 border-amber-500/40'
+                      : hasInstances
+                        ? 'bg-primary/15 text-primary border-primary/40'
+                        : 'bg-dark-100/60 text-text-light/50 border-border-light/30'
+                  }`}
+                  title={template.maxInstances !== null ? `Up to ${template.maxInstances} instances of this template` : 'No instance limit'}
+                >
+                  <Copy className='w-3 h-3' />
+                  <span>{countLabel} instance{template.maxInstances === null && template.instanceCount === 1 ? '' : 's'}</span>
+                </Badge>
+                {template.tags.slice(0, 3).map((tag) => (
+                  <Badge key={tag} className='bg-blue-selected/15 text-blue-selected/90 border border-blue-selected/30 text-[10px] px-1.5 py-0 font-medium hidden sm:inline-flex'>
+                    {tag}
+                  </Badge>
+                ))}
+              </div>
+              <p className='text-xs text-text-light/70 mt-0.5 truncate' title={template.description}>{template.description}</p>
+            </div>
+          </div>
+
+          <div className='flex items-center gap-4 shrink-0'>
+            <div className='hidden md:flex items-center gap-3 text-xs text-text-light/60'>
+              <span className='flex items-center gap-1.5' title='Default RAM for new instances'>
+                <MemoryStick className='w-3.5 h-3.5 text-primary/70' />
+                <span className='text-white/80 font-medium'>{formatMB(template.memory)}</span>
+              </span>
+              <span className='flex items-center gap-1.5' title='Default CPUs for new instances'>
+                <Cpu className='w-3.5 h-3.5 text-primary/70' />
+                <span className='text-white/80 font-medium'>{template.cpus} CPU{template.cpus === 1 ? '' : 's'}</span>
+              </span>
+            </div>
+            <Button
+              variant='default'
+              size='sm'
+              className='h-9 px-4 bg-primary hover:bg-primary/90 transition-all hover:shadow-lg hover:shadow-primary/20 disabled:opacity-60'
+              onClick={() => (configOpen ? setConfigOpen(false) : openConfig())}
+              disabled={deploying || !template.ovaExists || atLimit}
+              title={atLimit ? `Instance limit reached (${countLabel})` : undefined}
+            >
+              {deploying
+                ? <Loader2 className='w-3.5 h-3.5 mr-1.5 animate-spin' />
+                : <Plus className='w-3.5 h-3.5 mr-1.5' />}
+              {deploying ? 'Creating...' : atLimit ? 'Limit Reached' : 'Create Instance'}
+            </Button>
+          </div>
+        </div>
+
+        {/* New instance configuration */}
+        {configOpen && !deploying && (
+          <div className='mt-4 p-4 rounded-lg bg-dark-100/60 border border-primary/30 animate-fade-in'>
+            <div className='flex flex-wrap items-end gap-4'>
+              <label className='flex flex-col gap-1'>
+                <span className='text-[11px] uppercase tracking-wide text-text-light/60'>RAM (MB)</span>
+                <input
+                  type='number'
+                  min={512}
+                  max={host?.totalMemMB}
+                  step={512}
+                  value={memory}
+                  onChange={(e) => setMemory(parseInt(e.target.value, 10) || 0)}
+                  className={`w-28 bg-dark-300/60 border rounded-md px-2.5 py-1.5 text-sm text-white/95 outline-none transition-colors ${memoryValid ? 'border-border-light/40 focus:border-primary/60' : 'border-red-500/60'}`}
+                />
+              </label>
+              <label className='flex flex-col gap-1'>
+                <span className='text-[11px] uppercase tracking-wide text-text-light/60'>CPUs</span>
+                <input
+                  type='number'
+                  min={1}
+                  max={host?.cpuCount}
+                  value={cpus}
+                  onChange={(e) => setCpus(parseInt(e.target.value, 10) || 0)}
+                  className={`w-20 bg-dark-300/60 border rounded-md px-2.5 py-1.5 text-sm text-white/95 outline-none transition-colors ${cpusValid ? 'border-border-light/40 focus:border-primary/60' : 'border-red-500/60'}`}
+                />
+              </label>
+              <div className='flex gap-2'>
+                <Button
+                  variant='default'
+                  size='sm'
+                  className='h-9 px-4 bg-primary hover:bg-primary/90'
+                  onClick={create}
+                  disabled={!memoryValid || !cpusValid}
+                >
+                  <Plus className='w-3.5 h-3.5 mr-1.5' />
+                  Create
+                </Button>
+                <Button
+                  variant='outline'
+                  size='sm'
+                  className='h-9 px-3 border-border-light/50 hover:bg-secondary/50'
+                  onClick={() => setConfigOpen(false)}
+                >
+                  Cancel
+                </Button>
+              </div>
+            </div>
+            {host && (
+              <p className='text-xs text-text-light/60 mt-3'>
+                Host has <span className='text-white/80 font-medium'>{formatMB(host.totalMemMB)}</span> RAM
+                (<span className='text-white/80 font-medium'>{formatMB(host.freeMemMB)}</span> free) and{' '}
+                <span className='text-white/80 font-medium'>{host.cpuCount} CPUs</span>
+                {host.runningCount > 0 && (
+                  <> — running VMs are already assigned {formatMB(host.allocatedMemMB)} / {host.allocatedCpus} CPUs</>
+                )}.
+              </p>
+            )}
+            {memoryOverFree && (
+              <p className='text-xs text-amber-400/90 mt-1 flex items-center gap-1.5'>
+                <AlertTriangle className='w-3 h-3 shrink-0' />
+                More RAM than the host currently has free — the VM may run slowly or fail to start.
+              </p>
+            )}
+          </div>
+        )}
+
+        {deploying && deployMessage && <ProgressLine message={deployMessage} />}
+
+        {!template.ovaExists && (
+          <div className='flex items-center gap-2 mt-3 px-3 py-2 rounded-lg bg-amber-500/10 border border-amber-500/30'>
+            <AlertTriangle className='w-3.5 h-3.5 text-amber-400 shrink-0' />
+            <span className='text-xs text-text-light/80 truncate' title={template.ovaPath}>
+              OVA image not found — new instances cannot be created
+            </span>
+          </div>
+        )}
+      </div>
+
+      {/* Lane body — this template's instances */}
+      <div className='relative p-5'>
+        {hasInstances
+          ? (
+            <div className='grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4'>
+              {children}
+            </div>
+            )
+          : (
+            <div className='flex items-center justify-center gap-3 py-8 px-4 rounded-lg border border-dashed border-border-light/30 text-center'>
+              <Boxes className='w-5 h-5 text-text-light/40 shrink-0' />
+              <p className='text-xs text-text-light/50'>
+                No instances yet. Create one to get started — each instance gets its own shared folder.
+              </p>
+            </div>
+            )}
+      </div>
+    </section>
+  );
+}
+
+export function LocalVmCard ({
+  instance, host, busyAction, busyMessage, flashMessage,
+  onStart, onStop, onRestart, onConsole, onDelete, onOpenSharedFolder, onSaveEdits, onDropFiles
+}: LocalVmCardProps) {
+  const [editing, setEditing] = useState(false);
+  const [editLabel, setEditLabel] = useState('');
+  const [editNotes, setEditNotes] = useState('');
+  const [editMemory, setEditMemory] = useState(instance.memory);
+  const [editCpus, setEditCpus] = useState(instance.cpus);
+  const [confirmingDelete, setConfirmingDelete] = useState(false);
+  const [deleteData, setDeleteData] = useState(false);
+  const [dragDepth, setDragDepth] = useState(0);
+
+  const busy = busyAction !== null;
+  const dragOver = dragDepth > 0;
+  const title = instance.label || instance.displayName;
+  // VirtualBox can only change RAM/CPUs while the VM is powered off
+  const specsEditable = instance.state === 'stopped';
+
+  const memoryValid = Number.isInteger(editMemory) && editMemory >= 512 && (!host || editMemory <= host.totalMemMB);
+  const cpusValid = Number.isInteger(editCpus) && editCpus >= 1 && (!host || editCpus <= host.cpuCount);
+
+  const startEditing = () => {
+    setEditLabel(instance.label ?? '');
+    setEditNotes(instance.notes ?? '');
+    setEditMemory(instance.memory);
+    setEditCpus(instance.cpus);
+    setEditing(true);
+  };
+
+  const saveEdits = () => {
+    setEditing(false);
+    onSaveEdits({
+      label: editLabel.trim(),
+      notes: editNotes.trim(),
+      memory: specsEditable ? editMemory : instance.memory,
+      cpus: specsEditable ? editCpus : instance.cpus
+    });
+  };
+
+  const confirmDelete = () => {
+    setConfirmingDelete(false);
+    onDelete(deleteData);
+  };
+
+  // Drag files from the desktop straight onto the card to copy them into the
+  // VM's shared folder
+  const handleDragEnter = (e: DragEvent<HTMLDivElement>) => {
+    if (busy || !e.dataTransfer.types.includes('Files')) return;
+    e.preventDefault();
+    setDragDepth((d) => d + 1);
+  };
+  const handleDragOver = (e: DragEvent<HTMLDivElement>) => {
+    if (busy || !e.dataTransfer.types.includes('Files')) return;
+    e.preventDefault();
+  };
+  const handleDragLeave = () => setDragDepth((d) => Math.max(0, d - 1));
+  const handleDrop = (e: DragEvent<HTMLDivElement>) => {
+    e.preventDefault();
+    setDragDepth(0);
+    if (busy) return;
+    const files = Array.from(e.dataTransfer.files);
+    if (files.length > 0) onDropFiles(files);
+  };
+
+  const topBarColor = busy
+    ? 'bg-gradient-to-r from-amber-500 to-amber-400/60'
+    : instance.state === 'running'
+      ? 'bg-gradient-to-r from-primary to-blue-selected/60'
+      : 'bg-border-light/30';
+
+  const actionIcon = (action: VmAction, Icon: typeof Play) => (busyAction === action
+    ? <Loader2 className='w-3.5 h-3.5 mr-1.5 animate-spin' />
+    : <Icon className='w-3.5 h-3.5 mr-1.5' />);
+
+  return (
+    <Card
+      className={`relative overflow-hidden glass-card glass-card-hover group transition-all ${busy ? 'opacity-90' : ''} ${dragOver ? 'ring-2 ring-primary shadow-lg shadow-primary/30' : ''}`}
+      onDragEnter={handleDragEnter}
+      onDragOver={handleDragOver}
+      onDragLeave={handleDragLeave}
+      onDrop={handleDrop}
+    >
       <div className='absolute -inset-2 bg-gradient-to-tr from-primary/20 to-transparent rounded-xl blur-xl opacity-0 group-hover:opacity-40 transition-opacity duration-500' />
       <div className={`absolute top-0 left-0 right-0 h-1 ${topBarColor}`} />
 
+      {/* Drop target overlay */}
+      {dragOver && (
+        <div className='absolute inset-0 z-20 flex flex-col items-center justify-center gap-2 bg-dark-100/90 border-2 border-dashed border-primary rounded-xl pointer-events-none'>
+          <FileDown className='w-8 h-8 text-primary animate-bounce' />
+          <p className='text-sm font-medium text-white/90'>Drop to copy into shared folder</p>
+          <p className='text-xs text-text-light/60'>{title}</p>
+        </div>
+      )}
+
+      {/* Delete confirmation overlay */}
+      {confirmingDelete && (
+        <div className='absolute inset-0 z-20 flex items-center justify-center bg-dark-100/95 rounded-xl p-4 animate-fade-in'>
+          <div className='w-full space-y-3'>
+            <div className='flex items-center gap-2'>
+              <AlertTriangle className='w-4 h-4 text-red-400 shrink-0' />
+              <p className='text-sm font-semibold text-white/95'>Delete {title}?</p>
+            </div>
+            <p className='text-xs text-text-light/70'>
+              The VM and its disks are removed permanently.
+            </p>
+            <label className='flex items-start gap-2 px-3 py-2 rounded-lg bg-dark-300/60 border border-border-light/20 cursor-pointer hover:border-red-500/40 transition-colors'>
+              <input
+                type='checkbox'
+                checked={deleteData}
+                onChange={(e) => setDeleteData(e.target.checked)}
+                className='mt-0.5 accent-red-500'
+              />
+              <span className='text-xs text-text-light/80'>
+                Also delete shared folder data
+                {instance.sharedFolderItemCount > 0 && (
+                  <span className='text-red-400 font-medium'> ({instance.sharedFolderItemCount} item{instance.sharedFolderItemCount === 1 ? '' : 's'})</span>
+                )}
+                <span className='block text-text-light/50 mt-0.5'>Otherwise the folder is kept on disk.</span>
+              </span>
+            </label>
+            <div className='flex gap-2'>
+              <Button
+                variant='outline'
+                size='sm'
+                className='flex-1 h-8 border-border-light/50 hover:bg-secondary/50'
+                onClick={() => setConfirmingDelete(false)}
+              >
+                Cancel
+              </Button>
+              <Button
+                variant='destructive'
+                size='sm'
+                className='flex-1 h-8 bg-red-600 hover:bg-red-500'
+                onClick={confirmDelete}
+              >
+                <Trash2 className='w-3.5 h-3.5 mr-1.5' />
+                Delete
+              </Button>
+            </div>
+          </div>
+        </div>
+      )}
+
       <CardHeader className='relative pb-3'>
         <div className='flex items-start justify-between'>
-          <div className='space-y-1 flex-1'>
-            <CardTitle className='text-lg font-semibold text-white/95 tracking-tight'>{vm.displayName}</CardTitle>
-            <CardDescription className='text-xs text-text-light/80 line-clamp-2'>{vm.description}</CardDescription>
-          </div>
-          <StateBadge state={vm.state} />
-        </div>
-        {vm.tags.length > 0 && (
-          <div className='flex flex-wrap items-center gap-1.5 mt-3'>
-            {vm.tags.slice(0, 3).map((tag) => (
-              <Badge key={tag} className='bg-blue-selected/15 text-blue-selected/90 border border-blue-selected/30 text-xs px-2 py-0.5 font-medium'>
-                {tag}
-              </Badge>
-            ))}
-          </div>
-        )}
-      </CardHeader>
-
-      <CardContent className='relative'>
-        <SpecsBar memory={vm.memory} cpus={vm.cpus} />
-
-        <div className='flex gap-2'>
-          {vm.state === 'available'
+          {editing
             ? (
-              <Button
-                variant='default'
-                size='sm'
-                className='flex-1 h-9 bg-primary hover:bg-primary/90 transition-all hover:shadow-lg hover:shadow-primary/20'
-                onClick={onStart}
-              >
-                <Download className='w-3.5 h-3.5 mr-1.5' />
-                Import & Start
-              </Button>
-              )
-            : vm.state === 'stopped'
-              ? (
-                <>
+              <div className='flex-1 space-y-2 mr-2'>
+                <input
+                  value={editLabel}
+                  onChange={(e) => setEditLabel(e.target.value)}
+                  placeholder={instance.displayName}
+                  maxLength={60}
+                  autoFocus
+                  className='w-full bg-dark-100/60 border border-border-light/40 focus:border-primary/60 rounded-md px-2.5 py-1.5 text-sm font-semibold text-white/95 outline-none placeholder:text-text-light/40 transition-colors'
+                />
+                <textarea
+                  value={editNotes}
+                  onChange={(e) => setEditNotes(e.target.value)}
+                  placeholder='What is this VM for? e.g. "Case #4211 — phishing payload"'
+                  rows={2}
+                  maxLength={200}
+                  className='w-full bg-dark-100/60 border border-border-light/40 focus:border-primary/60 rounded-md px-2.5 py-1.5 text-xs text-text-light/90 outline-none placeholder:text-text-light/40 resize-none transition-colors'
+                />
+                <div className='flex items-end gap-3'>
+                  <label className='flex flex-col gap-1'>
+                    <span className='text-[10px] uppercase tracking-wide text-text-light/60'>RAM (MB)</span>
+                    <input
+                      type='number'
+                      min={512}
+                      max={host?.totalMemMB}
+                      step={512}
+                      value={editMemory}
+                      onChange={(e) => setEditMemory(parseInt(e.target.value, 10) || 0)}
+                      disabled={!specsEditable}
+                      title={specsEditable ? undefined : 'Stop the VM to change RAM'}
+                      className={`w-24 bg-dark-100/60 border rounded-md px-2 py-1 text-xs text-white/95 outline-none transition-colors disabled:opacity-50 disabled:cursor-not-allowed ${memoryValid ? 'border-border-light/40 focus:border-primary/60' : 'border-red-500/60'}`}
+                    />
+                  </label>
+                  <label className='flex flex-col gap-1'>
+                    <span className='text-[10px] uppercase tracking-wide text-text-light/60'>CPUs</span>
+                    <input
+                      type='number'
+                      min={1}
+                      max={host?.cpuCount}
+                      value={editCpus}
+                      onChange={(e) => setEditCpus(parseInt(e.target.value, 10) || 0)}
+                      disabled={!specsEditable}
+                      title={specsEditable ? undefined : 'Stop the VM to change CPUs'}
+                      className={`w-16 bg-dark-100/60 border rounded-md px-2 py-1 text-xs text-white/95 outline-none transition-colors disabled:opacity-50 disabled:cursor-not-allowed ${cpusValid ? 'border-border-light/40 focus:border-primary/60' : 'border-red-500/60'}`}
+                    />
+                  </label>
+                  {!specsEditable && (
+                    <span className='text-[10px] text-text-light/50 pb-1.5'>Stop the VM to change specs</span>
+                  )}
+                </div>
+                <div className='flex gap-2'>
                   <Button
                     variant='default'
                     size='sm'
-                    className='flex-1 h-9 bg-primary hover:bg-primary/90 transition-all hover:shadow-lg hover:shadow-primary/20'
-                    onClick={onStart}
+                    className='h-7 px-3 text-xs bg-primary hover:bg-primary/90'
+                    onClick={saveEdits}
+                    disabled={specsEditable && (!memoryValid || !cpusValid)}
                   >
-                    <Play className='w-3.5 h-3.5 mr-1.5' />
-                    Start
+                    <Check className='w-3 h-3 mr-1' />
+                    Save
                   </Button>
                   <Button
                     variant='outline'
                     size='sm'
-                    className='h-9 px-3 border-border-light/50 hover:bg-red-600/20 hover:border-red-500/50 hover:text-red-400'
-                    onClick={onDelete}
-                    title='Delete VM'
+                    className='h-7 px-3 text-xs border-border-light/50 hover:bg-secondary/50'
+                    onClick={() => setEditing(false)}
                   >
-                    <Trash2 className='w-4 h-4' />
+                    Cancel
                   </Button>
-                </>
-                )
-              : (
-                <>
-                  <Button
-                    variant='destructive'
-                    size='sm'
-                    className='flex-1 h-9 bg-red-600/80 hover:bg-red-600 border-red-600/50'
-                    onClick={onStop}
+                </div>
+              </div>
+              )
+            : (
+              <div className='space-y-1 flex-1 min-w-0'>
+                <div className='flex items-center gap-1.5'>
+                  <CardTitle className='text-lg font-semibold text-white/95 tracking-tight truncate'>{title}</CardTitle>
+                  <button
+                    onClick={startEditing}
+                    disabled={busy}
+                    title='Rename / add notes'
+                    className='opacity-0 group-hover:opacity-100 text-text-light/50 hover:text-primary transition-all shrink-0 disabled:opacity-0'
                   >
-                    <Square className='w-3.5 h-3.5 mr-1.5' />
-                    Stop
-                  </Button>
-                  <Button
-                    variant='outline'
-                    size='sm'
-                    className='flex-1 h-9 border-border-light/50 hover:bg-secondary/50'
-                    onClick={onRestart}
-                  >
-                    <RotateCw className='w-3.5 h-3.5 mr-1.5' />
-                    Restart
-                  </Button>
-                </>
+                    <Pencil className='w-3.5 h-3.5' />
+                  </button>
+                </div>
+                {instance.label && (
+                  <p className='text-[11px] text-text-light/50 uppercase tracking-wide'>{instance.displayName}</p>
                 )}
+                {instance.notes
+                  ? (
+                    <p className='text-xs text-amber-200/80 flex items-start gap-1.5'>
+                      <StickyNote className='w-3 h-3 mt-0.5 shrink-0 text-amber-400/80' />
+                      <span className='line-clamp-2'>{instance.notes}</span>
+                    </p>
+                    )
+                  : (
+                    <CardDescription className='text-xs text-text-light/40 italic'>No notes — use the pencil to say what this is for</CardDescription>
+                    )}
+              </div>
+              )}
+          {!editing && <StateBadge state={instance.state} busyAction={busyAction} />}
+        </div>
+      </CardHeader>
 
-          {vm.state === 'running' && (
+      <CardContent className='relative'>
+        <SpecsBar memory={instance.memory} cpus={instance.cpus} />
+
+        {/* Shared folder — click to open, or drop files anywhere on the card */}
+        <button
+          onClick={onOpenSharedFolder}
+          disabled={busy}
+          title={`Open shared folder — drag files onto this card to copy them in\n${instance.sharedFolderPath}${instance.sharedFolderAttached ? '\nMounts in the guest as /media/sf_shared (via Guest Additions)' : '\n(attaches to the VM on next start)'}`}
+          className='w-full flex items-center gap-2 mb-4 px-3 py-2 rounded-lg bg-dark-100/50 border border-border-light/20 hover:border-primary/50 hover:bg-dark-100/80 transition-all text-left disabled:opacity-60 disabled:cursor-not-allowed'
+        >
+          {busyAction === 'folder' || busyAction === 'copy'
+            ? <Loader2 className='w-3.5 h-3.5 text-primary animate-spin shrink-0' />
+            : <FolderOpen className='w-3.5 h-3.5 text-primary/80 shrink-0' />}
+          <span className='text-xs text-text-light/70 font-mono truncate flex-1' dir='rtl'>{instance.sharedFolderPath}</span>
+          {instance.sharedFolderItemCount > 0 && (
+            <span className='text-[10px] text-text-light/60 bg-dark-300/80 border border-border-light/20 px-1.5 py-0.5 rounded-full shrink-0'>
+              {instance.sharedFolderItemCount}
+            </span>
+          )}
+          {!instance.sharedFolderAttached && (
+            <span className='w-1.5 h-1.5 rounded-full bg-amber-400 shrink-0' title='Shared folder attaches on next start' />
+          )}
+          {instance.sharedFolderAttached && instance.state === 'running' && instance.guestAdditionsActive === true && (
+            <span className='w-1.5 h-1.5 rounded-full bg-green-400 shrink-0' title='Live in the guest at /media/sf_shared' />
+          )}
+        </button>
+
+        {instance.state === 'running' && instance.sharedFolderAttached && instance.guestAdditionsActive === false && (
+          <div className='flex items-start gap-2 mb-4 -mt-2 px-3 py-2 rounded-lg bg-amber-500/10 border border-amber-500/30'>
+            <AlertTriangle className='w-3.5 h-3.5 text-amber-400 shrink-0 mt-0.5' />
+            <span className='text-xs text-text-light/80'>
+              Guest Additions not detected — the shared folder won't appear inside the VM until they're installed.
+            </span>
+          </div>
+        )}
+
+        <div className='flex gap-2'>
+          {instance.state === 'stopped' || instance.state === 'suspended'
+            ? (
+              <>
+                <Button
+                  variant='default'
+                  size='sm'
+                  className='flex-1 h-9 bg-primary hover:bg-primary/90 transition-all hover:shadow-lg hover:shadow-primary/20'
+                  onClick={onStart}
+                  disabled={busy}
+                >
+                  {actionIcon('start', Play)}
+                  {instance.state === 'suspended' ? 'Resume' : 'Start'}
+                </Button>
+                <Button
+                  variant='outline'
+                  size='sm'
+                  className='h-9 px-3 border-border-light/50 hover:bg-secondary/50 hover:border-primary/50'
+                  onClick={onOpenSharedFolder}
+                  disabled={busy}
+                  title='Open shared folder'
+                >
+                  {busyAction === 'folder'
+                    ? <Loader2 className='w-4 h-4 animate-spin' />
+                    : <FolderOpen className='w-4 h-4' />}
+                </Button>
+                <Button
+                  variant='outline'
+                  size='sm'
+                  className='h-9 px-3 border-border-light/50 hover:bg-red-600/20 hover:border-red-500/50 hover:text-red-400'
+                  onClick={() => setConfirmingDelete(true)}
+                  disabled={busy}
+                  title='Delete VM'
+                >
+                  {busyAction === 'delete'
+                    ? <Loader2 className='w-4 h-4 animate-spin' />
+                    : <Trash2 className='w-4 h-4' />}
+                </Button>
+              </>
+              )
+            : (
+              <>
+                <Button
+                  variant='destructive'
+                  size='sm'
+                  className='flex-1 h-9 bg-red-600/80 hover:bg-red-600 border-red-600/50'
+                  onClick={onStop}
+                  disabled={busy}
+                >
+                  {actionIcon('stop', Square)}
+                  Stop
+                </Button>
+                <Button
+                  variant='outline'
+                  size='sm'
+                  className='flex-1 h-9 border-border-light/50 hover:bg-secondary/50'
+                  onClick={onRestart}
+                  disabled={busy}
+                >
+                  {actionIcon('restart', RotateCw)}
+                  Restart
+                </Button>
+                <Button
+                  variant='outline'
+                  size='sm'
+                  className='h-9 px-3 border-border-light/50 hover:bg-secondary/50 hover:border-primary/50'
+                  onClick={onOpenSharedFolder}
+                  disabled={busy}
+                  title='Open shared folder'
+                >
+                  {busyAction === 'folder'
+                    ? <Loader2 className='w-4 h-4 animate-spin' />
+                    : <FolderOpen className='w-4 h-4' />}
+                </Button>
+              </>
+              )}
+
+          {instance.state === 'running' && (
             <Button
               variant='outline'
               size='sm'
               className='h-9 px-3 border-border-light/50 hover:bg-secondary/50 hover:border-primary/50'
               onClick={onConsole}
+              disabled={busy}
               title='Open Console'
             >
-              <Monitor className='w-4 h-4' />
+              {busyAction === 'console'
+                ? <Loader2 className='w-4 h-4 animate-spin' />
+                : <Monitor className='w-4 h-4' />}
             </Button>
           )}
         </div>
+
+        {busy && busyMessage && <ProgressLine message={busyMessage} />}
+
+        {!busy && flashMessage && (
+          <div className='flex items-center gap-2 mt-3 px-3 py-2 rounded-lg bg-green-500/10 border border-green-500/30 animate-fade-in'>
+            <Check className='w-3.5 h-3.5 text-green-400 shrink-0' />
+            <span className='text-xs text-green-200/90 truncate' title={flashMessage}>{flashMessage}</span>
+          </div>
+        )}
       </CardContent>
     </Card>
   );
 }
 
-export function RemoteVmCard ({ instance, onStart, onStop, onRestart, onConsole, onDelete }: RemoteVmCardProps) {
+export function RemoteVmCard ({ instance, busyAction = null, onStart, onStop, onRestart, onConsole, onDelete }: RemoteVmCardProps) {
+  const busy = busyAction !== null;
+
   const topBarColor = instance.state === 'running'
     ? 'bg-gradient-to-r from-purple-500 to-purple-400/60'
     : 'bg-border-light/30';
@@ -229,6 +803,10 @@ export function RemoteVmCard ({ instance, onStart, onStop, onRestart, onConsole,
     hour: '2-digit',
     minute: '2-digit'
   });
+
+  const actionIcon = (action: VmAction, Icon: typeof Play) => (busyAction === action
+    ? <Loader2 className='w-3.5 h-3.5 mr-1.5 animate-spin' />
+    : <Icon className='w-3.5 h-3.5 mr-1.5' />);
 
   return (
     <Card className='relative overflow-hidden glass-card glass-card-hover group'>
@@ -246,7 +824,7 @@ export function RemoteVmCard ({ instance, onStart, onStop, onRestart, onConsole,
               Created {createdDate}
             </CardDescription>
           </div>
-          <StateBadge state={instance.state} />
+          <StateBadge state={instance.state} busyAction={busyAction} />
         </div>
       </CardHeader>
 
@@ -266,8 +844,9 @@ export function RemoteVmCard ({ instance, onStart, onStop, onRestart, onConsole,
                   size='sm'
                   className='flex-1 h-9 bg-purple-600 hover:bg-purple-500 transition-all hover:shadow-lg hover:shadow-purple-500/20'
                   onClick={onStart}
+                  disabled={busy}
                 >
-                  <Play className='w-3.5 h-3.5 mr-1.5' />
+                  {actionIcon('start', Play)}
                   Start
                 </Button>
                 <Button
@@ -275,9 +854,12 @@ export function RemoteVmCard ({ instance, onStart, onStop, onRestart, onConsole,
                   size='sm'
                   className='h-9 px-3 border-border-light/50 hover:bg-red-600/20 hover:border-red-500/50 hover:text-red-400'
                   onClick={onDelete}
+                  disabled={busy}
                   title='Delete Instance'
                 >
-                  <Trash2 className='w-4 h-4' />
+                  {busyAction === 'delete'
+                    ? <Loader2 className='w-4 h-4 animate-spin' />
+                    : <Trash2 className='w-4 h-4' />}
                 </Button>
               </>
               )
@@ -289,8 +871,9 @@ export function RemoteVmCard ({ instance, onStart, onStop, onRestart, onConsole,
                     size='sm'
                     className='flex-1 h-9 bg-red-600/80 hover:bg-red-600 border-red-600/50'
                     onClick={onStop}
+                    disabled={busy}
                   >
-                    <Square className='w-3.5 h-3.5 mr-1.5' />
+                    {actionIcon('stop', Square)}
                     Stop
                   </Button>
                   <Button
@@ -298,8 +881,9 @@ export function RemoteVmCard ({ instance, onStart, onStop, onRestart, onConsole,
                     size='sm'
                     className='flex-1 h-9 border-border-light/50 hover:bg-secondary/50'
                     onClick={onRestart}
+                    disabled={busy}
                   >
-                    <RotateCw className='w-3.5 h-3.5 mr-1.5' />
+                    {actionIcon('restart', RotateCw)}
                     Restart
                   </Button>
                   <Button
@@ -307,9 +891,12 @@ export function RemoteVmCard ({ instance, onStart, onStop, onRestart, onConsole,
                     size='sm'
                     className='h-9 px-3 border-border-light/50 hover:bg-secondary/50 hover:border-purple-500/50'
                     onClick={onConsole}
+                    disabled={busy}
                     title='Console'
                   >
-                    <Monitor className='w-4 h-4' />
+                    {busyAction === 'console'
+                      ? <Loader2 className='w-4 h-4 animate-spin' />
+                      : <Monitor className='w-4 h-4' />}
                   </Button>
                 </>
                 )

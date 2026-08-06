@@ -1,4 +1,4 @@
-import { type IpcRendererEvent, contextBridge, ipcRenderer } from 'electron';
+import { type IpcRendererEvent, contextBridge, ipcRenderer, webUtils } from 'electron';
 
 const versions: Record<string, unknown> = {};
 
@@ -24,6 +24,14 @@ export type RendererListener = (event: IpcRendererEvent, ...args: unknown[]) => 
 export const globals = {
   /** Processes versions **/
   versions,
+
+  /**
+   * Resolve the real filesystem path of a File object (e.g. one dropped onto
+   * the window from the desktop), for main-process file operations.
+   */
+  getPathForFile (file: File): string {
+    return webUtils.getPathForFile(file);
+  },
 
   /**
    * A minimal set of methods exposed from Electron's `ipcRenderer`

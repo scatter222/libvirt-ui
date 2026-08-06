@@ -1,5 +1,12 @@
 settings:
   imagesDirectory: /opt/launcher-apps/vms
+  # VirtualBox machine files and disks for deployed VMs go to
+  # <machinesDirectory>/<username>/<vm-name>/ (via import --basefolder).
+  machinesDirectory: /storage/vbox-vms
+  # Per-VM shared folders go to <sharedFoldersDirectory>/<username>/<vm-name>,
+  # automounted into the guest as "shared" (needs Guest Additions in the
+  # guest; appears as e.g. /media/sf_shared).
+  sharedFoldersDirectory: /storage/vbox-share
   autoRefresh: true
   refreshInterval: 5000
 
@@ -9,6 +16,9 @@ vms:
     description: SANS digital forensics and incident response environment
     category: forensics
     ovaFile: sift-workstation.ova
+    # Maximum concurrent instances of this template (omit for unlimited)
+    maxInstances: 3
+    # Default specs for new instances; adjustable per instance at creation
     specs:
       memory: 4096
       cpus: 2
@@ -22,6 +32,7 @@ vms:
     description: Malware analysis and reverse engineering toolkit
     category: malware-analysis
     ovaFile: remnux.ova
+    maxInstances: 3
     specs:
       memory: 4096
       cpus: 2
