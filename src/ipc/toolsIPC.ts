@@ -1,23 +1,16 @@
-import { spawn } from 'child_process';
 import * as fs from 'fs';
 import * as path from 'path';
 import { promisify } from 'util';
 
 import { app, ipcMain, shell } from 'electron';
-import * as yaml from 'yaml';
 
 const readFile = promisify(fs.readFile);
 
-// Get config path
+// Get config path. The tools catalog is a JSON document generated from the
+// per-system tool reference sheets (FLARE-VM, REMnux, SIFT, Parrot OS).
 const CONFIG_PATH = app.isPackaged
-  ? path.join(process.resourcesPath, 'config/tools.yaml')
-  : path.join(app.getAppPath(), 'config/tools.yaml');
-
-interface ToolLaunch {
-  type: 'terminal' | 'gui';
-  command: string;
-  requiresSudo: boolean;
-}
+  ? path.join(process.resourcesPath, 'config/tools.json')
+  : path.join(app.getAppPath(), 'config/tools.json');
 
 interface ToolDocumentation {
   quickStart: string;
@@ -32,9 +25,13 @@ interface Tool {
   name: string;
   displayName: string;
   description: string;
+  // Which system/VM the tool lives on (references System.id).
+  system: string;
   category: string;
+  interface: 'cli' | 'gui';
+  isDefault?: boolean;
+  requiresSudo?: boolean;
   tags: string[];
-  launch: ToolLaunch;
   documentation: ToolDocumentation;
 }
 
@@ -46,6 +43,16 @@ interface ToolCategory {
   description: string;
 }
 
+// A system is a VM in the lab that ships a particular tool suite.
+interface System {
+  id: string;
+  name: string;
+  os: string;
+  color: string;
+  icon: string;
+  description: string;
+}
+
 interface Mission {
   id: string;
   name: string;
@@ -54,33 +61,25 @@ interface Mission {
 }
 
 interface ToolsConfig {
+  systems: System[];
   categories: ToolCategory[];
   missions: Mission[];
   tools: Tool[];
-  settings: {
-    defaultTerminal: string;
-    defaultLaunchMode: string;
-    autoRefresh: boolean;
-    refreshInterval: number;
-  };
+  settings: Record<string, unknown>;
 }
 
 async function loadToolsConfig (): Promise<ToolsConfig> {
   try {
     const fileContents = await readFile(CONFIG_PATH, 'utf8');
-    return yaml.parse(fileContents) as ToolsConfig;
+    return JSON.parse(fileContents) as ToolsConfig;
   } catch (error) {
     console.error('Failed to load tools configuration:', error);
     return {
+      systems: [],
       categories: [],
       missions: [],
       tools: [],
-      settings: {
-        defaultTerminal: 'gnome-terminal',
-        defaultLaunchMode: 'terminal',
-        autoRefresh: true,
-        refreshInterval: 5000
-      }
+      settings: {}
     };
   }
 }
@@ -108,6 +107,17 @@ export function setupToolsIPC (): void {
     }
   });
 
+  // Get systems (the VMs each tool set lives on)
+  ipcMain.handle('tools:systems', async () => {
+    try {
+      const config = await loadToolsConfig();
+      return config.systems;
+    } catch (error) {
+      console.error('Failed to get systems:', error);
+      return [];
+    }
+  });
+
   // Get missions
   ipcMain.handle('tools:missions', async () => {
     try {
@@ -130,6 +140,17 @@ export function setupToolsIPC (): void {
     }
   });
 
+  // Get tools by system
+  ipcMain.handle('tools:by-system', async (_, systemId: string) => {
+    try {
+      const config = await loadToolsConfig();
+      return config.tools.filter((tool) => tool.system === systemId);
+    } catch (error) {
+      console.error('Failed to get tools by system:', error);
+      return [];
+    }
+  });
+
   // Get tools for mission
   ipcMain.handle('tools:by-mission', async (_, missionId: string) => {
     try {
@@ -141,84 +162,6 @@ export function setupToolsIPC (): void {
     } catch (error) {
       console.error('Failed to get tools by mission:', error);
       return [];
-    }
-  });
-
-  // Launch a tool
-  ipcMain.handle('tools:launch', async (_, toolId: string) => {
-    try {
-      const config = await loadToolsConfig();
-      const tool = config.tools.find((t) => t.id === toolId);
-
-      if (!tool) {
-        throw new Error(`Tool not found: ${toolId}`);
-      }
-
-      const { defaultTerminal } = config.settings;
-
-      if (tool.launch.type === 'terminal') {
-        // Launch in terminal
-        const terminalCommand = tool.launch.requiresSudo
-          ? `sudo ${tool.launch.command}`
-          : tool.launch.command;
-
-        // Different terminal emulators have different syntax
-        let terminalArgs: string[] = [];
-        switch (defaultTerminal) {
-          case 'gnome-terminal':
-            terminalArgs = [
-              '--',
-              'bash',
-              '-c',
-`${terminalCommand}; echo "Press any key to exit..."; read`
-            ];
-            break;
-          case 'konsole':
-            terminalArgs = [
-              '-e',
-              'bash',
-              '-c',
-`${terminalCommand}; echo "Press any key to exit..."; read`
-            ];
-            break;
-          case 'xterm':
-            terminalArgs = [
-              '-e',
-              'bash',
-              '-c',
-`${terminalCommand}; echo "Press any key to exit..."; read`
-            ];
-            break;
-          default:
-            terminalArgs = ['-e', terminalCommand];
-        }
-
-        const child = spawn(defaultTerminal, terminalArgs, {
-          detached: true,
-          stdio: 'ignore'
-        });
-        child.unref();
-      } else {
-        // Launch GUI application
-        const command = tool.launch.requiresSudo
-          ? 'pkexec' // Use pkexec for GUI apps that need root
-          : tool.launch.command;
-
-        const args = tool.launch.requiresSudo
-          ? [tool.launch.command]
-          : [];
-
-        const child = spawn(command, args, {
-          detached: true,
-          stdio: 'ignore'
-        });
-        child.unref();
-      }
-
-      return { success: true };
-    } catch (error) {
-      const errorMessage = error instanceof Error ? error.message : String(error);
-      throw new Error(`Failed to launch tool: ${errorMessage}`);
     }
   });
 
