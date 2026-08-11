@@ -1,0 +1,38 @@
+{
+	// Ubuntu-based dev container for Playwright E2E work (running + recording)
+	// on hosts where Playwright's tooling is unsupported (e.g. Oracle/RHEL).
+	// The image tag must match the @playwright/test version in package.json.
+	"name": "libvirt-ui e2e",
+	"image": "mcr.microsoft.com/playwright:v1.62.1-noble",
+
+	"runArgs": [
+		// Chromium/Electron renderers need more shared memory than the 64MB default.
+		"--ipc=host",
+		"--shm-size=1g",
+		// Required on SELinux-enforcing hosts (Oracle Linux) so the container
+		// may use the bind-mounted X11 socket. Harmless elsewhere.
+		"--security-opt", "label=disable"
+	],
+
+	// Show app + Playwright Inspector windows on the host's X server
+	// (works for Xorg and for Wayland via Xwayland). Run `xhost +local:`
+	// on the host once per session to allow the connection.
+	"mounts": [
+		"source=/tmp/.X11-unix,target=/tmp/.X11-unix,type=bind"
+	],
+	"containerEnv": {
+		"DISPLAY": "${localEnv:DISPLAY}",
+		// Containers rarely have working GPU passthrough; render GL in software.
+		"LIBGL_ALWAYS_SOFTWARE": "1"
+	},
+
+	// playwright install chromium provides the browser the Inspector UI itself
+	// runs in — Electron comes from node_modules and needs no browser install.
+	"postCreateCommand": "corepack enable && pnpm install --frozen-lockfile && pnpm exec playwright install chromium",
+
+	"customizations": {
+		"vscode": {
+			"extensions": ["ms-playwright.playwright"]
+		}
+	}
+}

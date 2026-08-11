@@ -40,6 +40,7 @@
     "test:main": "vitest run --project main",
     "test:coverage": "vitest run --coverage",
     "test:e2e": "electron-forge package && playwright test",
+    "test:record": "node tests/e2e/record.mjs",
     "clean": "rimraf node_modules .vite pnpm-lock.yaml",
     "postinstall": "husky",
     "prepack": "pinst --disable",
