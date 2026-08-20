@@ -5,9 +5,9 @@ import { createAppWindow } from './appWindow';
 import { setupApiIPC } from './ipc/apiIPC';
 import { setupLocalVmIPC } from './ipc/localVmIPC';
 import { setupRemoteVmIPC } from './ipc/remoteVmIPC';
+import { setupRulesIPC } from './ipc/rulesIPC';
 import { setupToolsIPC } from './ipc/toolsIPC';
 import { setupWebAppsIPC } from './ipc/webappsIPC';
-import { setupYaraIPC } from './ipc/yaraIPC';
 
 process.env.ELECTRON_DISABLE_SECURITY_WARNINGS = 'true';
 
@@ -33,7 +33,7 @@ app.on('ready', () => {
   setupToolsIPC();
   setupWebAppsIPC();
   setupApiIPC();
-  setupYaraIPC();
+  setupRulesIPC();
 
   // Generic handler for opening external URLs (used by VM console, etc.)
   ipcMain.on('open-external', (_event, url: string) => {

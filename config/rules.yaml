@@ -1,0 +1,8 @@
+# Detection rules management - point this at your rules API server.
+# Rule sets (Suricata, YARA, Zeek, etc.) are configured server-side in
+# the API's appsettings.json under "RuleSets"; the launcher discovers
+# them at runtime via GET {baseUrl}{basePath}/sets.
+rules:
+  baseUrl: http://localhost:5000
+  timeout: 10000
+  basePath: /api/rules
