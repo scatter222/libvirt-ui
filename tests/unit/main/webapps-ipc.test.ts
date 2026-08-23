@@ -47,16 +47,23 @@ describe('webappsIPC', () => {
   });
 
   it('lists apps from the yaml config with live status from a HEAD probe', async () => {
-    vi.stubGlobal('fetch', vi.fn(async (url: string) => {
+    const fetchMock = vi.fn(async (url: string) => {
       if (url === 'http://kibana.test:5601') return { ok: true };
       throw new Error('ECONNREFUSED');
-    }));
+    });
+    vi.stubGlobal('fetch', fetchMock);
 
     const apps = await ipcMain.invoke('webapps:list') as Array<{ id: string; status: string }>;
     expect(apps.map((a) => [a.id, a.status])).toEqual([
       ['kibana', 'online'],
       ['cyberchef', 'offline']
     ]);
+
+    // The statuses above can only come from the stub (kibana.test does not
+    // resolve for the real fetch); assert the probe contract explicitly too.
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(fetchMock).toHaveBeenCalledWith('http://kibana.test:5601', expect.objectContaining({ method: 'HEAD' }));
+    expect(fetchMock).toHaveBeenCalledWith('http://chef.test:8080', expect.objectContaining({ method: 'HEAD' }));
   });
 
   it('reports a reachable-but-erroring app as offline (non-ok response)', async () => {
