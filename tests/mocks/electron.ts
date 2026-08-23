@@ -53,6 +53,19 @@ function createIpcMainMock () {
 
 export const ipcMain = createIpcMainMock();
 
+// app.getAppPath() decides where modules look for their config/ directory.
+// Tests point it at a temp fixture directory BEFORE importing the module
+// under test (config paths are computed at import time).
+let appPath = process.cwd();
+
+export const app = {
+  isPackaged: false,
+  getAppPath: vi.fn(() => appPath),
+  setAppPath (p: string) {
+    appPath = p;
+  }
+};
+
 let applicationMenu: unknown = null;
 
 export const Menu = {
@@ -73,16 +86,27 @@ export const BrowserWindow = {
 };
 
 export const shell = {
-  openExternal: vi.fn(() => Promise.resolve())
+  openExternal: vi.fn(() => Promise.resolve()),
+  // Electron resolves with '' on success, or an error message string
+  openPath: vi.fn(() => Promise.resolve(''))
+};
+
+// net.request is stubbed per test (see tests/setup/net-stub.ts)
+export const net = {
+  request: vi.fn()
 };
 
 export function resetElectronMock () {
   ipcMain.reset();
   applicationMenu = null;
+  appPath = process.cwd();
+  vi.mocked(app.getAppPath).mockClear();
   vi.mocked(Menu.buildFromTemplate).mockClear();
   vi.mocked(Menu.setApplicationMenu).mockClear();
   vi.mocked(Menu.getApplicationMenu).mockClear();
   vi.mocked(BrowserWindow.getAllWindows).mockClear();
   vi.mocked(BrowserWindow.fromWebContents).mockClear();
   vi.mocked(shell.openExternal).mockClear();
+  vi.mocked(shell.openPath).mockClear();
+  vi.mocked(net.request).mockReset();
 }
