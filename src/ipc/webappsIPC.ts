@@ -2,7 +2,9 @@ import * as fs from 'fs';
 import * as path from 'path';
 import { promisify } from 'util';
 
-import { app, ipcMain, shell } from 'electron';
+import { handleFeatureIpc } from '@/modes/appMode';
+
+import { app, shell } from 'electron';
 import * as yaml from 'yaml';
 
 const readFile = promisify(fs.readFile);
@@ -223,7 +225,7 @@ async function checkWebAppStatus (url: string): Promise<'online' | 'offline'> {
 
 export function setupWebAppsIPC (): void {
   // Get all web apps
-  ipcMain.handle('webapps:list', async () => {
+  handleFeatureIpc('webApps', 'webapps:list', async () => {
     try {
       const config = await loadWebAppsConfig();
 
@@ -242,7 +244,7 @@ export function setupWebAppsIPC (): void {
   });
 
   // Open web app in browser
-  ipcMain.handle('webapps:open', async (_, url: string) => {
+  handleFeatureIpc('webApps', 'webapps:open', async (_, url: string) => {
     try {
       await shell.openExternal(url);
       return { success: true };
@@ -253,7 +255,7 @@ export function setupWebAppsIPC (): void {
   });
 
   // Check web app status
-  ipcMain.handle('webapps:check-status', async (_, url: string) => {
+  handleFeatureIpc('webApps', 'webapps:check-status', async (_, url: string) => {
     try {
       const status = await checkWebAppStatus(url);
       return { status, success: true };
@@ -264,7 +266,7 @@ export function setupWebAppsIPC (): void {
   });
 
   // Get web apps by category
-  ipcMain.handle('webapps:by-category', async (_, category: string) => {
+  handleFeatureIpc('webApps', 'webapps:by-category', async (_, category: string) => {
     try {
       const config = await loadWebAppsConfig();
       return config.webapps.filter((app) => app.category === category);
@@ -275,7 +277,7 @@ export function setupWebAppsIPC (): void {
   });
 
   // Reload configuration
-  ipcMain.handle('webapps:reload-config', async () => {
+  handleFeatureIpc('webApps', 'webapps:reload-config', async () => {
     try {
       const config = await loadWebAppsConfig();
       return { success: true, config };

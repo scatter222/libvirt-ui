@@ -2,7 +2,9 @@ import * as fs from 'fs';
 import * as path from 'path';
 import { promisify } from 'util';
 
-import { app, ipcMain, shell } from 'electron';
+import { handleFeatureIpc } from '@/modes/appMode';
+
+import { app, shell } from 'electron';
 
 const readFile = promisify(fs.readFile);
 
@@ -86,7 +88,7 @@ async function loadToolsConfig (): Promise<ToolsConfig> {
 
 export function setupToolsIPC (): void {
   // Get all tools
-  ipcMain.handle('tools:list', async () => {
+  handleFeatureIpc('tools', 'tools:list', async () => {
     try {
       const config = await loadToolsConfig();
       return config.tools;
@@ -97,7 +99,7 @@ export function setupToolsIPC (): void {
   });
 
   // Get categories
-  ipcMain.handle('tools:categories', async () => {
+  handleFeatureIpc('tools', 'tools:categories', async () => {
     try {
       const config = await loadToolsConfig();
       return config.categories;
@@ -108,7 +110,7 @@ export function setupToolsIPC (): void {
   });
 
   // Get systems (the VMs each tool set lives on)
-  ipcMain.handle('tools:systems', async () => {
+  handleFeatureIpc('tools', 'tools:systems', async () => {
     try {
       const config = await loadToolsConfig();
       return config.systems;
@@ -119,7 +121,7 @@ export function setupToolsIPC (): void {
   });
 
   // Get missions
-  ipcMain.handle('tools:missions', async () => {
+  handleFeatureIpc('tools', 'tools:missions', async () => {
     try {
       const config = await loadToolsConfig();
       return config.missions;
@@ -130,7 +132,7 @@ export function setupToolsIPC (): void {
   });
 
   // Get tools by category
-  ipcMain.handle('tools:by-category', async (_, categoryId: string) => {
+  handleFeatureIpc('tools', 'tools:by-category', async (_, categoryId: string) => {
     try {
       const config = await loadToolsConfig();
       return config.tools.filter((tool) => tool.category === categoryId);
@@ -141,7 +143,7 @@ export function setupToolsIPC (): void {
   });
 
   // Get tools by system
-  ipcMain.handle('tools:by-system', async (_, systemId: string) => {
+  handleFeatureIpc('tools', 'tools:by-system', async (_, systemId: string) => {
     try {
       const config = await loadToolsConfig();
       return config.tools.filter((tool) => tool.system === systemId);
@@ -152,7 +154,7 @@ export function setupToolsIPC (): void {
   });
 
   // Get tools for mission
-  ipcMain.handle('tools:by-mission', async (_, missionId: string) => {
+  handleFeatureIpc('tools', 'tools:by-mission', async (_, missionId: string) => {
     try {
       const config = await loadToolsConfig();
       const mission = config.missions.find((m) => m.id === missionId);
@@ -166,7 +168,7 @@ export function setupToolsIPC (): void {
   });
 
   // Open documentation in browser
-  ipcMain.handle('tools:open-docs', async (_, url: string) => {
+  handleFeatureIpc('tools', 'tools:open-docs', async (_, url: string) => {
     try {
       await shell.openExternal(url);
       return { success: true };
@@ -177,7 +179,7 @@ export function setupToolsIPC (): void {
   });
 
   // Reload configuration
-  ipcMain.handle('tools:reload-config', async () => {
+  handleFeatureIpc('tools', 'tools:reload-config', async () => {
     try {
       const config = await loadToolsConfig();
       return { success: true, config };

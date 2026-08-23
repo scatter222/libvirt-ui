@@ -1,4 +1,5 @@
 import { MenuChannels } from '@/channels/menuChannels';
+import { isDevToolsAllowed } from '@/modes/appMode';
 
 import { BrowserWindow, Menu, ipcMain, shell } from 'electron';
 
@@ -46,6 +47,8 @@ export const registerMenuIpc = (mainWindow: BrowserWindow) => {
   });
 
   ipcMain.handle(MenuChannels.WEB_TOGGLE_DEVTOOLS, () => {
+    if (!isDevToolsAllowed()) return;
+
     mainWindow.webContents.toggleDevTools();
   });
 

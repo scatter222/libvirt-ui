@@ -22,7 +22,10 @@ const config: ForgeConfig = {
     // Set application copyright
     appCopyright: `Copyright © ${new Date().getFullYear()} ${author.name}`,
     // Set application icon
-    icon: path.resolve(rootDir, 'assets/icons/icon')
+    icon: path.resolve(rootDir, 'assets/icons/icon'),
+    // Ship the config directory next to the app: the main process reads it
+    // from `process.resourcesPath/config` when packaged (modes, tools, VMs...).
+    extraResource: [path.resolve(rootDir, 'config')]
   },
   rebuildConfig: {},
   makers: [

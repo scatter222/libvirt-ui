@@ -1,4 +1,28 @@
+import { type AppModeState, FALLBACK_APP_MODE_STATE } from '@/modes/features';
+
 import { type IpcRendererEvent, contextBridge, ipcRenderer, webUtils } from 'electron';
+
+const APP_MODE_ARG = '--app-mode=';
+
+/**
+ * The main process resolves the machine's deployment mode before the window is
+ * created and passes it in as an extra argument, so the UI can decide which
+ * tabs and features exist without an async round trip (and without a flash of
+ * features that mode has turned off). `mode:get` re-fetches it on demand.
+ */
+function readAppMode (): AppModeState {
+  const arg = process.argv.find((value) => value.startsWith(APP_MODE_ARG));
+
+  if (arg) {
+    try {
+      return JSON.parse(decodeURIComponent(arg.slice(APP_MODE_ARG.length))) as AppModeState;
+    } catch (error) {
+      console.error('Failed to parse app mode bootstrap:', error);
+    }
+  }
+
+  return FALLBACK_APP_MODE_STATE;
+}
 
 const versions: Record<string, unknown> = {};
 
@@ -24,6 +48,9 @@ export type RendererListener = (event: IpcRendererEvent, ...args: unknown[]) => 
 export const globals = {
   /** Processes versions **/
   versions,
+
+  /** Deployment mode and feature flags resolved by the main process. */
+  appMode: readAppMode(),
 
   /**
    * Resolve the real filesystem path of a File object (e.g. one dropped onto

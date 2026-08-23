@@ -1,5 +1,6 @@
 import type { ConfigEnv, UserConfig } from 'vite';
 import { defineConfig, mergeConfig } from 'vite';
+import viteTsconfigPaths from 'vite-tsconfig-paths';
 
 import { external, getBuildConfig, pluginHotRestart } from './vite.base.config';
 
@@ -23,7 +24,7 @@ export default defineConfig((env) => {
         }
       }
     },
-    plugins: [pluginHotRestart('reload')]
+    plugins: [pluginHotRestart('reload'), viteTsconfigPaths()]
   };
 
   return mergeConfig(getBuildConfig(forgeEnv), config);
