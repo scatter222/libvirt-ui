@@ -1,10 +1,10 @@
 import { Button } from '@/app/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/app/components/ui/card';
-import { YaraRulesDialog } from '@/app/components/yara-rules-dialog';
+import { RulesManagerDialog } from '@/app/components/rules-manager-dialog';
 
 import {
   Activity, Terminal, Server, Globe2, TrendingUp,
-  Clock, Network, HardDrive, Download, FileSearch
+  Clock, Network, HardDrive, Download, ShieldAlert
 } from 'lucide-react';
 import { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
@@ -37,7 +37,7 @@ export function Dashboard () {
     diskTotal: 500
   });
   const [loading, setLoading] = useState(true);
-  const [yaraDialogOpen, setYaraDialogOpen] = useState(false);
+  const [rulesDialogOpen, setRulesDialogOpen] = useState(false);
 
   useEffect(() => {
     loadDashboardData();
@@ -265,10 +265,10 @@ export function Dashboard () {
                 <Button
                   variant='default'
                   className='bg-primary hover:bg-primary/90 transition-all hover:shadow-lg hover:shadow-primary/20'
-                  onClick={() => setYaraDialogOpen(true)}
+                  onClick={() => setRulesDialogOpen(true)}
                 >
-                  <FileSearch className='w-4 h-4 mr-2' />
-                  YARA Rules
+                  <ShieldAlert className='w-4 h-4 mr-2' />
+                  Detection Rules
                 </Button>
                 <Button
                   variant='outline'
@@ -284,7 +284,7 @@ export function Dashboard () {
         </div>
       </div>
 
-      <YaraRulesDialog open={yaraDialogOpen} onClose={() => setYaraDialogOpen(false)} />
+      <RulesManagerDialog open={rulesDialogOpen} onClose={() => setRulesDialogOpen(false)} />
     </div>
   );
 }
