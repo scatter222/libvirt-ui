@@ -1,8 +1,10 @@
 import * as fs from 'fs';
+import * as https from 'https';
 import * as path from 'path';
 import { promisify } from 'util';
 
 import { app, ipcMain, shell } from 'electron';
+import fetch from 'node-fetch';
 import * as yaml from 'yaml';
 
 const readFile = promisify(fs.readFile);
@@ -203,6 +205,17 @@ async function loadWebAppsConfig (): Promise<WebAppsConfig> {
   }
 }
 
+// The lab's internal web apps sit behind self-signed certificates, so the
+// reachability probe must not fail on certificate errors. node-fetch (rather
+// than the built-in fetch) is used because it accepts a Node https.Agent.
+// Only the https status probe is relaxed — nothing else in the app skips
+// certificate validation.
+const selfSignedAgent = new https.Agent({ rejectUnauthorized: false });
+
+function agentFor (parsedUrl: URL): https.Agent | undefined {
+  return parsedUrl.protocol === 'https:' ? selfSignedAgent : undefined;
+}
+
 // Simple status check function
 async function checkWebAppStatus (url: string): Promise<'online' | 'offline'> {
   try {
@@ -211,7 +224,8 @@ async function checkWebAppStatus (url: string): Promise<'online' | 'offline'> {
 
     const response = await fetch(url, {
       method: 'HEAD',
-      signal: controller.signal
+      signal: controller.signal,
+      agent: agentFor
     });
 
     clearTimeout(timeout);
