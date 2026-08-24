@@ -2,9 +2,7 @@ import * as fs from 'fs';
 import * as path from 'path';
 import { promisify } from 'util';
 
-import { handleFeatureIpc } from '@/modes/appMode';
-
-import { app, net } from 'electron';
+import { app, ipcMain, net } from 'electron';
 import * as yaml from 'yaml';
 
 const readFile = promisify(fs.readFile);
@@ -93,7 +91,7 @@ async function apiRequest (endpoint: string, method: string = 'GET'): Promise<un
 
 export function setupApiIPC (): void {
   // Health check (unauthenticated)
-  handleFeatureIpc('api', 'api:health', async () => {
+  ipcMain.handle('api:health', async () => {
     try {
       const config = await loadApiConfig();
       const url = `${config.api.baseUrl}/api/health`;
@@ -125,7 +123,7 @@ export function setupApiIPC (): void {
   });
 
   // Get authenticated user info
-  handleFeatureIpc('api', 'api:user', async () => {
+  ipcMain.handle('api:user', async () => {
     try {
       const result = await apiRequest('/api/user');
       return { success: true, data: result };
@@ -136,7 +134,7 @@ export function setupApiIPC (): void {
   });
 
   // Get tools from server
-  handleFeatureIpc('api', 'api:tools', async () => {
+  ipcMain.handle('api:tools', async () => {
     try {
       const result = await apiRequest('/api/tools');
       return { success: true, data: result };
@@ -147,7 +145,7 @@ export function setupApiIPC (): void {
   });
 
   // Notify server of a tool launch
-  handleFeatureIpc('api', 'api:launch-tool', async (_, toolId: string) => {
+  ipcMain.handle('api:launch-tool', async (_, toolId: string) => {
     try {
       const result = await apiRequest(`/api/tools/${toolId}/launch`, 'POST');
       return { success: true, data: result };
@@ -158,7 +156,7 @@ export function setupApiIPC (): void {
   });
 
   // Get session info
-  handleFeatureIpc('api', 'api:session', async () => {
+  ipcMain.handle('api:session', async () => {
     try {
       const result = await apiRequest('/api/session');
       return { success: true, data: result };
@@ -169,7 +167,7 @@ export function setupApiIPC (): void {
   });
 
   // Reload API config
-  handleFeatureIpc('api', 'api:reload-config', async () => {
+  ipcMain.handle('api:reload-config', async () => {
     apiConfig = null;
     try {
       const config = await loadApiConfig();

@@ -2,9 +2,7 @@ import * as fs from 'fs';
 import * as path from 'path';
 import { promisify } from 'util';
 
-import { handleFeatureIpc } from '@/modes/appMode';
-
-import { app, net } from 'electron';
+import { app, ipcMain, net } from 'electron';
 import * as yaml from 'yaml';
 
 const readFile = promisify(fs.readFile);
@@ -118,7 +116,7 @@ export interface RemoteVmInstance {
 
 export function setupRemoteVmIPC (): void {
   // List available VM templates on the server
-  handleFeatureIpc('remoteVms', 'remote-vms:list-templates', async () => {
+  ipcMain.handle('remote-vms:list-templates', async () => {
     try {
       const result = await apiRequest('/api/vms/templates');
       return { success: true, data: result };
@@ -129,7 +127,7 @@ export function setupRemoteVmIPC (): void {
   });
 
   // List the current user's VM instances
-  handleFeatureIpc('remoteVms', 'remote-vms:list-instances', async () => {
+  ipcMain.handle('remote-vms:list-instances', async () => {
     try {
       const result = await apiRequest('/api/vms/instances');
       return { success: true, data: result };
@@ -140,7 +138,7 @@ export function setupRemoteVmIPC (): void {
   });
 
   // Spawn a new VM instance from a template
-  handleFeatureIpc('remoteVms', 'remote-vms:spawn', async (_, templateId: string) => {
+  ipcMain.handle('remote-vms:spawn', async (_, templateId: string) => {
     try {
       const result = await apiRequest('/api/vms/instances', 'POST', { templateId });
       return { success: true, data: result };
@@ -151,7 +149,7 @@ export function setupRemoteVmIPC (): void {
   });
 
   // Start a stopped instance
-  handleFeatureIpc('remoteVms', 'remote-vms:start', async (_, instanceId: string) => {
+  ipcMain.handle('remote-vms:start', async (_, instanceId: string) => {
     try {
       const result = await apiRequest(`/api/vms/instances/${instanceId}/start`, 'POST');
       return { success: true, data: result };
@@ -162,7 +160,7 @@ export function setupRemoteVmIPC (): void {
   });
 
   // Stop a running instance
-  handleFeatureIpc('remoteVms', 'remote-vms:stop', async (_, instanceId: string) => {
+  ipcMain.handle('remote-vms:stop', async (_, instanceId: string) => {
     try {
       const result = await apiRequest(`/api/vms/instances/${instanceId}/stop`, 'POST');
       return { success: true, data: result };
@@ -173,7 +171,7 @@ export function setupRemoteVmIPC (): void {
   });
 
   // Restart an instance
-  handleFeatureIpc('remoteVms', 'remote-vms:restart', async (_, instanceId: string) => {
+  ipcMain.handle('remote-vms:restart', async (_, instanceId: string) => {
     try {
       const result = await apiRequest(`/api/vms/instances/${instanceId}/restart`, 'POST');
       return { success: true, data: result };
@@ -184,7 +182,7 @@ export function setupRemoteVmIPC (): void {
   });
 
   // Delete an instance
-  handleFeatureIpc('remoteVms', 'remote-vms:delete', async (_, instanceId: string) => {
+  ipcMain.handle('remote-vms:delete', async (_, instanceId: string) => {
     try {
       const result = await apiRequest(`/api/vms/instances/${instanceId}`, 'DELETE');
       return { success: true, data: result };
@@ -195,7 +193,7 @@ export function setupRemoteVmIPC (): void {
   });
 
   // Get console connection info for an instance
-  handleFeatureIpc('remoteVms', 'remote-vms:console', async (_, instanceId: string) => {
+  ipcMain.handle('remote-vms:console', async (_, instanceId: string) => {
     try {
       const result = await apiRequest(`/api/vms/instances/${instanceId}/console`);
       return { success: true, data: result };
@@ -206,7 +204,7 @@ export function setupRemoteVmIPC (): void {
   });
 
   // Force reload (clear cached config)
-  handleFeatureIpc('remoteVms', 'remote-vms:reload', async () => {
+  ipcMain.handle('remote-vms:reload', async () => {
     cachedConfig = null;
     return { success: true };
   });

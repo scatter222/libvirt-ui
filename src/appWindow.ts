@@ -1,9 +1,8 @@
 import path from 'node:path';
 
-import { MenuChannels } from '@/channels/menuChannels';
 import { registerMenuIpc } from '@/ipc/menuIPC';
 import appMenu from '@/menu/appMenu';
-import { APP_MODE_ARG, getAppModeState, isDevToolsAllowed } from '@/modes/appMode';
+import { APP_MODE_ARG, getAppMode } from '@/modes/appMode';
 import { registerWindowStateChangedEvents } from '@/windowState';
 
 import { BrowserWindow, Menu, app } from 'electron';
@@ -42,9 +41,9 @@ export function createAppWindow (): BrowserWindow {
       nodeIntegrationInWorker: false,
       nodeIntegrationInSubFrames: false,
       preload: path.join(import.meta.dirname, 'preload.js'),
-      // Ship the deployment mode into the preload script so the UI knows which
-      // features are on before it renders its first frame.
-      additionalArguments: [`${APP_MODE_ARG}${encodeURIComponent(JSON.stringify(getAppModeState()))}`]
+      // Pass the machine's mode to the preload script so the UI has it on its
+      // very first render.
+      additionalArguments: [`${APP_MODE_ARG}${encodeURIComponent(getAppMode() ?? '')}`]
     }
   };
 
@@ -64,15 +63,6 @@ export function createAppWindow (): BrowserWindow {
 
   // Build the application menu
   const menu = Menu.buildFromTemplate(appMenu);
-
-  // The devtools item uses a native role, so the mode has to be applied to the
-  // menu item itself - a disabled item also disables its accelerator.
-  const devTools = menu.getMenuItemById(MenuChannels.WEB_TOGGLE_DEVTOOLS);
-  if (devTools) {
-    devTools.visible = isDevToolsAllowed();
-    devTools.enabled = isDevToolsAllowed();
-  }
-
   Menu.setApplicationMenu(menu);
 
   // Show window when is ready to

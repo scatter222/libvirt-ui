@@ -4,9 +4,7 @@ import * as os from 'os';
 import * as path from 'path';
 import { promisify } from 'util';
 
-import { handleFeatureIpc } from '@/modes/appMode';
-
-import { app, shell } from 'electron';
+import { app, ipcMain, shell } from 'electron';
 import * as yaml from 'yaml';
 
 const execFileAsync = promisify(execFile);
@@ -425,7 +423,7 @@ function withVmLock<T> (vmName: string, fn: () => Promise<T>): Promise<T> {
 }
 
 export function setupLocalVmIPC (): void {
-  handleFeatureIpc('vms', 'local-vms:list', async () => {
+  ipcMain.handle('local-vms:list', async () => {
     try {
       const config = await loadConfig();
       const registered = await getRegisteredVms();
@@ -502,7 +500,7 @@ export function setupLocalVmIPC (): void {
     }
   });
 
-  handleFeatureIpc('vms', 'local-vms:deploy', async (event, templateName: string, overrides?: { memory?: number; cpus?: number }) => {
+  ipcMain.handle('local-vms:deploy', async (event, templateName: string, overrides?: { memory?: number; cpus?: number }) => {
     assertSafeName(templateName);
     const config = await loadConfig();
     const tpl = config.vms.find((v) => v.name === templateName);
@@ -629,7 +627,7 @@ export function setupLocalVmIPC (): void {
     });
   });
 
-  handleFeatureIpc('vms', 'local-vms:start', async (_, vmName: string) => {
+  ipcMain.handle('local-vms:start', async (_, vmName: string) => {
     assertSafeName(vmName);
     return withVmLock(vmName, async () => {
       const registered = await getRegisteredVms();
@@ -653,7 +651,7 @@ export function setupLocalVmIPC (): void {
     });
   });
 
-  handleFeatureIpc('vms', 'local-vms:stop', async (_, vmName: string, force?: boolean) => {
+  ipcMain.handle('local-vms:stop', async (_, vmName: string, force?: boolean) => {
     assertSafeName(vmName);
     return withVmLock(vmName, async () => {
       const state = await getVmState(vmName);
@@ -677,7 +675,7 @@ export function setupLocalVmIPC (): void {
     });
   });
 
-  handleFeatureIpc('vms', 'local-vms:restart', async (_, vmName: string) => {
+  ipcMain.handle('local-vms:restart', async (_, vmName: string) => {
     assertSafeName(vmName);
     return withVmLock(vmName, async () => {
       const state = await getVmState(vmName);
@@ -714,7 +712,7 @@ export function setupLocalVmIPC (): void {
     });
   });
 
-  handleFeatureIpc('vms', 'local-vms:open-console', async (_, vmName: string) => {
+  ipcMain.handle('local-vms:open-console', async (_, vmName: string) => {
     assertSafeName(vmName);
     const state = await getVmState(vmName);
 
@@ -737,7 +735,7 @@ export function setupLocalVmIPC (): void {
     return { success: true };
   });
 
-  handleFeatureIpc('vms', 'local-vms:delete', async (_, vmName: string, deleteData?: boolean) => {
+  ipcMain.handle('local-vms:delete', async (_, vmName: string, deleteData?: boolean) => {
     assertSafeName(vmName);
     return withVmLock(vmName, async () => {
       const config = await loadConfig();
@@ -767,7 +765,7 @@ export function setupLocalVmIPC (): void {
     });
   });
 
-  handleFeatureIpc('vms', 'local-vms:set-specs', async (_, vmName: string, requested: { memory: number; cpus: number }) => {
+  ipcMain.handle('local-vms:set-specs', async (_, vmName: string, requested: { memory: number; cpus: number }) => {
     assertSafeName(vmName);
     const specs = validateSpecs(requested?.memory, requested?.cpus);
     return withVmLock(vmName, async () => {
@@ -787,7 +785,7 @@ export function setupLocalVmIPC (): void {
     });
   });
 
-  handleFeatureIpc('vms', 'local-vms:set-metadata', async (_, vmName: string, meta: VmMetadata) => {
+  ipcMain.handle('local-vms:set-metadata', async (_, vmName: string, meta: VmMetadata) => {
     assertSafeName(vmName);
     // Extradata is read back line-by-line, so values must stay single-line
     const clean = (v: string | undefined) => (v ?? '').replace(/\s*[\r\n]+\s*/g, ' ').trim();
@@ -827,7 +825,7 @@ export function setupLocalVmIPC (): void {
     });
   });
 
-  handleFeatureIpc('vms', 'local-vms:copy-to-shared', async (_, vmName: string, sourcePaths: string[]) => {
+  ipcMain.handle('local-vms:copy-to-shared', async (_, vmName: string, sourcePaths: string[]) => {
     assertSafeName(vmName);
     if (!Array.isArray(sourcePaths) || sourcePaths.length === 0) {
       throw new Error('No files to copy');
@@ -848,7 +846,7 @@ export function setupLocalVmIPC (): void {
     return { success: true, copied, folder: folderPath };
   });
 
-  handleFeatureIpc('vms', 'local-vms:open-shared-folder', async (_, vmName: string) => {
+  ipcMain.handle('local-vms:open-shared-folder', async (_, vmName: string) => {
     assertSafeName(vmName);
     const config = await loadConfig();
     const hostPath = await ensureSharedFolder(config, vmName);
@@ -857,14 +855,14 @@ export function setupLocalVmIPC (): void {
     return { success: true, path: hostPath };
   });
 
-  handleFeatureIpc('vms', 'local-vms:get-state', async (_, vmName: string) => {
+  ipcMain.handle('local-vms:get-state', async (_, vmName: string) => {
     assertSafeName(vmName);
     const registered = await getRegisteredVms();
     if (!registered.has(vmName)) return 'available';
     return await getVmState(vmName);
   });
 
-  handleFeatureIpc('vms', 'local-vms:reload-config', async () => {
+  ipcMain.handle('local-vms:reload-config', async () => {
     const config = await loadConfig();
     return { success: true, config };
   });

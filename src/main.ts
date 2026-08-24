@@ -4,12 +4,10 @@ import installExtension, { REACT_DEVELOPER_TOOLS } from 'electron-devtools-insta
 import { createAppWindow } from './appWindow';
 import { setupApiIPC } from './ipc/apiIPC';
 import { setupLocalVmIPC } from './ipc/localVmIPC';
-import { setupModeIPC } from './ipc/modeIPC';
 import { setupRemoteVmIPC } from './ipc/remoteVmIPC';
 import { setupRulesIPC } from './ipc/rulesIPC';
 import { setupToolsIPC } from './ipc/toolsIPC';
 import { setupWebAppsIPC } from './ipc/webappsIPC';
-import { isDevToolsAllowed } from './modes/appMode';
 
 process.env.ELECTRON_DISABLE_SECURITY_WARNINGS = 'true';
 
@@ -19,8 +17,6 @@ app.commandLine.appendSwitch('auth-server-whitelist', '*.lab.forge.local');
 app.commandLine.appendSwitch('auth-negotiate-delegate-whitelist', '*.lab.forge.local');
 
 app.whenReady().then(() => {
-  if (!isDevToolsAllowed()) return;
-
   installExtension(REACT_DEVELOPER_TOOLS)
     .then((extension) => console.info(`Added Extension:  ${extension.name}`))
     .catch((err) => console.info('An error occurred: ', err));
@@ -32,10 +28,6 @@ app.whenReady().then(() => {
  * Some APIs can only be used after this event occurs.
  */
 app.on('ready', () => {
-  // Resolve the machine's deployment mode first: the IPC setup below gates
-  // handlers on the features that mode enables.
-  setupModeIPC();
-
   setupLocalVmIPC();
   setupRemoteVmIPC();
   setupToolsIPC();

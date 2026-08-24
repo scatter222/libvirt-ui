@@ -2,7 +2,6 @@ import { TabNavigation } from '@/app/components/tab-navigation';
 import { ThemeProvider } from '@/app/components/theme-provider';
 import Titlebar from '@/app/components/titlebar';
 import { AppModeProvider } from '@/app/context/app-mode-provider';
-import { FeatureRoute } from '@/app/context/feature-route';
 import { useRendererListener } from '@/app/hooks';
 import { Dashboard } from '@/app/screens/dashboard';
 import { ToolsDashboard } from '@/app/screens/tools-dashboard';
@@ -29,18 +28,9 @@ export default function App () {
             <main className='flex-1 overflow-auto'>
               <Routes>
                 <Route path='/' element={<Dashboard />} />
-                <Route
-                  path='/tools'
-                  element={<FeatureRoute name='tools'><ToolsDashboard /></FeatureRoute>}
-                />
-                <Route
-                  path='/vms'
-                  element={<FeatureRoute name='vms'><VMDashboard /></FeatureRoute>}
-                />
-                <Route
-                  path='/web-apps'
-                  element={<FeatureRoute name='webApps'><WebApplicationsDashboard /></FeatureRoute>}
-                />
+                <Route path='/tools' element={<ToolsDashboard />} />
+                <Route path='/vms' element={<VMDashboard />} />
+                <Route path='/web-apps' element={<WebApplicationsDashboard />} />
                 <Route path='*' element={<Navigate to='/' replace />} />
               </Routes>
             </main>

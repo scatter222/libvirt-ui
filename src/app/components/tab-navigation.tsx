@@ -1,5 +1,4 @@
 import { useAppMode } from '@/app/context/app-mode-provider';
-import type { FeatureId } from '@/modes/features';
 
 import { Home, Terminal, Server, Globe2 } from 'lucide-react';
 import { useLocation, useNavigate } from 'react-router-dom';
@@ -8,43 +7,19 @@ interface TabItem {
   path: string;
   label: string;
   icon: React.ComponentType<{ className?: string }>;
-  /** Tab is only shown when this feature is enabled by the deployment mode. */
-  feature: FeatureId;
 }
-
-const TABS: TabItem[] = [
-  {
-    path: '/',
-    label: 'Dashboard',
-    icon: Home,
-    feature: 'dashboard'
-  },
-  {
-    path: '/tools',
-    label: 'Tools',
-    icon: Terminal,
-    feature: 'tools'
-  },
-  {
-    path: '/vms',
-    label: 'VMs',
-    icon: Server,
-    feature: 'vms'
-  },
-  {
-    path: '/web-apps',
-    label: 'Web Apps',
-    icon: Globe2,
-    feature: 'webApps'
-  }
-];
 
 export function TabNavigation () {
   const location = useLocation();
   const navigate = useNavigate();
-  const { isEnabled, label: modeLabel, description, mode, source, warning } = useAppMode();
+  const mode = useAppMode();
 
-  const tabs = TABS.filter((tab) => isEnabled(tab.feature));
+  const tabs: TabItem[] = [
+    { path: '/', label: 'Dashboard', icon: Home },
+    { path: '/tools', label: 'Tools', icon: Terminal },
+    { path: '/vms', label: 'VMs', icon: Server },
+    { path: '/web-apps', label: 'Web Apps', icon: Globe2 }
+  ];
 
   return (
     <div className='bg-dark-200/80 backdrop-blur-sm border-b border-border-light/20'>
@@ -77,17 +52,11 @@ export function TabNavigation () {
             );
           })}
 
-          <span
-            title={`${description || mode}\nMode source: ${source}${warning ? `\n${warning}` : ''}`}
-            className={`
-              ml-auto text-xs px-2.5 py-1 rounded-full font-medium border
-              ${warning
-                ? 'bg-yellow-500/10 text-yellow-400 border-yellow-500/30'
-                : 'bg-primary/10 text-primary/90 border-primary/25'}
-            `}
-          >
-            {modeLabel}
-          </span>
+          {mode && (
+            <span className='ml-auto text-xs px-2.5 py-1 rounded-full font-medium bg-primary/10 text-primary/90 border border-primary/25'>
+              {mode}
+            </span>
+          )}
         </div>
       </div>
     </div>

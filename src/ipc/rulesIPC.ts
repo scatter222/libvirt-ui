@@ -2,9 +2,7 @@ import * as fs from 'fs';
 import * as path from 'path';
 import { promisify } from 'util';
 
-import { handleFeatureIpc } from '@/modes/appMode';
-
-import { app, net } from 'electron';
+import { app, ipcMain, net } from 'electron';
 import * as yaml from 'yaml';
 
 const readFile = promisify(fs.readFile);
@@ -87,7 +85,7 @@ function rulesRequest (url: string, method: string, body?: unknown): Promise<Rul
 
 export function setupRulesIPC (): void {
   // List the rule sets exposed by the server (e.g. suricata, yara, zeek).
-  handleFeatureIpc('rules', 'rules:sets', async () => {
+  ipcMain.handle('rules:sets', async () => {
     try {
       const config = await loadRulesConfig();
       const url = `${config.rules.baseUrl}${config.rules.basePath}/sets`;
@@ -102,7 +100,7 @@ export function setupRulesIPC (): void {
   });
 
   // List rule files in a specific set's server folder.
-  handleFeatureIpc('rules', 'rules:list', async (_event, setId: string) => {
+  ipcMain.handle('rules:list', async (_event, setId: string) => {
     try {
       const config = await loadRulesConfig();
       const url = `${config.rules.baseUrl}${config.rules.basePath}/${encodeURIComponent(setId)}/files`;
@@ -117,7 +115,7 @@ export function setupRulesIPC (): void {
   });
 
   // Get content of a specific rule file.
-  handleFeatureIpc('rules', 'rules:get', async (_event, setId: string, filename: string) => {
+  ipcMain.handle('rules:get', async (_event, setId: string, filename: string) => {
     try {
       const config = await loadRulesConfig();
       const url = `${config.rules.baseUrl}${config.rules.basePath}/${encodeURIComponent(setId)}/files/${encodeURIComponent(filename)}`;
@@ -132,7 +130,7 @@ export function setupRulesIPC (): void {
   });
 
   // Upload (create or overwrite) a rule file.
-  handleFeatureIpc('rules', 'rules:upload', async (
+  ipcMain.handle('rules:upload', async (
     _event,
     setId: string,
     payload: { name: string; content: string; overwrite: boolean }
@@ -159,7 +157,7 @@ export function setupRulesIPC (): void {
   });
 
   // Delete a rule file.
-  handleFeatureIpc('rules', 'rules:delete', async (_event, setId: string, filename: string) => {
+  ipcMain.handle('rules:delete', async (_event, setId: string, filename: string) => {
     try {
       const config = await loadRulesConfig();
       const url = `${config.rules.baseUrl}${config.rules.basePath}/${encodeURIComponent(setId)}/files/${encodeURIComponent(filename)}`;
@@ -174,7 +172,7 @@ export function setupRulesIPC (): void {
   });
 
   // Restart the rule-consuming service for this set in its guest VM.
-  handleFeatureIpc('rules', 'rules:restart', async (_event, setId: string) => {
+  ipcMain.handle('rules:restart', async (_event, setId: string) => {
     try {
       const config = await loadRulesConfig();
       const url = `${config.rules.baseUrl}${config.rules.basePath}/${encodeURIComponent(setId)}/restart`;
@@ -191,14 +189,14 @@ export function setupRulesIPC (): void {
   });
 
   // Reload the rules config from disk.
-  handleFeatureIpc('rules', 'rules:reload-config', async () => {
+  ipcMain.handle('rules:reload-config', async () => {
     rulesConfig = null;
     const config = await loadRulesConfig();
     return { success: true, config };
   });
 
   // Return the current config (useful for showing the configured URL in the UI).
-  handleFeatureIpc('rules', 'rules:get-config', async () => {
+  ipcMain.handle('rules:get-config', async () => {
     const config = await loadRulesConfig();
     return { success: true, config };
   });

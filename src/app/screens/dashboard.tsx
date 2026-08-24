@@ -1,8 +1,6 @@
-import { RulesManagerDialog } from '@/app/components/rules-manager-dialog';
 import { Button } from '@/app/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/app/components/ui/card';
-import { useAppMode } from '@/app/context/app-mode-provider';
-import type { FeatureId } from '@/modes/features';
+import { RulesManagerDialog } from '@/app/components/rules-manager-dialog';
 
 import {
   Activity, Terminal, Server, Globe2, TrendingUp,
@@ -21,7 +19,6 @@ interface SystemStats {
 
 interface QuickAccessItem {
   id: string;
-  feature: FeatureId;
   name: string;
   description: string;
   icon: React.ComponentType<{ className?: string }>;
@@ -32,7 +29,6 @@ interface QuickAccessItem {
 
 export function Dashboard () {
   const navigate = useNavigate();
-  const { isEnabled } = useAppMode();
   const [stats, setStats] = useState<SystemStats>({
     totalTools: 0,
     activeVMs: 0,
@@ -44,9 +40,8 @@ export function Dashboard () {
   const [rulesDialogOpen, setRulesDialogOpen] = useState(false);
 
   useEffect(() => {
-    // Re-runs when the machine's mode changes: the queries depend on it.
     loadDashboardData();
-  }, [isEnabled]);
+  }, []);
 
   const loadDashboardData = async () => {
     try {
@@ -56,9 +51,9 @@ export function Dashboard () {
         vmsList,
         webAppsList
       ] = await Promise.all([
-        isEnabled('tools') ? electron.ipcRenderer.invoke('tools:list').catch((): unknown[] => []) : [],
-        isEnabled('vms') ? electron.ipcRenderer.invoke('local-vms:list').catch((): unknown[] => []) : [],
-        isEnabled('webApps') ? electron.ipcRenderer.invoke('webapps:list').catch((): unknown[] => []) : []
+        electron.ipcRenderer.invoke('tools:list').catch((): unknown[] => []),
+        electron.ipcRenderer.invoke('local-vms:list').catch((): unknown[] => []),
+        electron.ipcRenderer.invoke('webapps:list').catch((): unknown[] => [])
       ]);
 
       setStats({
@@ -83,10 +78,9 @@ export function Dashboard () {
     }
   };
 
-  const allQuickAccessItems: QuickAccessItem[] = [
+  const quickAccessItems: QuickAccessItem[] = [
     {
       id: 'tools',
-      feature: 'tools',
       name: 'Security Tools',
       description: `${stats.totalTools} tools available`,
       icon: Terminal,
@@ -96,7 +90,6 @@ export function Dashboard () {
     },
     {
       id: 'vms',
-      feature: 'vms',
       name: 'Virtual Machines',
       description: `${stats.activeVMs} VMs running`,
       icon: Server,
@@ -106,7 +99,6 @@ export function Dashboard () {
     },
     {
       id: 'webapps',
-      feature: 'webApps',
       name: 'Web Applications',
       description: `${stats.webAppsOnline} apps online`,
       icon: Globe2,
@@ -115,9 +107,6 @@ export function Dashboard () {
       badgeType: 'success'
     }
   ];
-
-  // Only surface the areas this machine's mode has switched on.
-  const quickAccessItems = allQuickAccessItems.filter((item) => isEnabled(item.feature));
 
   const systemMetrics = [
     {
@@ -273,16 +262,14 @@ export function Dashboard () {
             </CardHeader>
             <CardContent>
               <div className='flex flex-wrap gap-3'>
-                {isEnabled('rules') && (
-                  <Button
-                    variant='default'
-                    className='bg-primary hover:bg-primary/90 transition-all hover:shadow-lg hover:shadow-primary/20'
-                    onClick={() => setRulesDialogOpen(true)}
-                  >
-                    <ShieldAlert className='w-4 h-4 mr-2' />
-                    Detection Rules
-                  </Button>
-                )}
+                <Button
+                  variant='default'
+                  className='bg-primary hover:bg-primary/90 transition-all hover:shadow-lg hover:shadow-primary/20'
+                  onClick={() => setRulesDialogOpen(true)}
+                >
+                  <ShieldAlert className='w-4 h-4 mr-2' />
+                  Detection Rules
+                </Button>
                 <Button
                   variant='outline'
                   className='border-border-light/50 hover:bg-secondary/50 hover:border-primary/50'
@@ -297,7 +284,7 @@ export function Dashboard () {
         </div>
       </div>
 
-      <RulesManagerDialog open={rulesDialogOpen && isEnabled('rules')} onClose={() => setRulesDialogOpen(false)} />
+      <RulesManagerDialog open={rulesDialogOpen} onClose={() => setRulesDialogOpen(false)} />
     </div>
   );
 }
